@@ -1,3 +1,5 @@
+[![dependency status](https://deps.rs/repo/github/DMGDy/epic-bar-rs/status.svg)](https://deps.rs/repo/github/DMGDy/epic-bar-rs)
+
 # epic bar
 
 :warning: **This is very early in development**: Currently unusable as it is being developed still !
