@@ -30,6 +30,14 @@ use gtk::{
     ApplicationWindow,
     Button,
     Label,
+    Box,
+    Orientation,
+    CssProvider,
+    StyleContext,
+    gdk::{
+        Display,
+    
+    },
     pango::{
         FontDescription,
         Weight,
@@ -46,27 +54,44 @@ use gtk4_layer_shell::{
     Edge,
 };
 
-const APP_ID: &str = "org.gtk_rs.HelloWorld";
+const FONT_SIZE: i32 = 12;
+const APP_ID: &str = "org.gtk_rs.epic_bar";
+const BUTTON_DEFAULT: &str = "button { border-radius: 0px; }";
     
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
 
-    app.connect_activate(build_ui);
+    app.connect_activate(top_bar);
 
     app.run()
 }
 
-fn build_ui(app: &Application) {
+fn top_bar(app: &Application) {
 
+    // default css props
+    let css_prov = gtk::CssProvider::new(); 
+    css_prov.load_from_string(BUTTON_DEFAULT);
+
+    init_style(&css_prov);
+
+    // set font
     let mut font = FontDescription::new();
-    font.set_family("Monospace");
-    font.set_size(8*SCALE);
+    font.set_family("Cascadia Code NF");
+    font.set_size(FONT_SIZE*SCALE);
     font.set_weight(Weight::Normal);
 
     let attr = AttrFontDesc::new(&font);
 
     let attr_list = AttrList::new();
     attr_list.insert(attr);
+
+    let main_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(1)
+        .tooltip_text("test box")
+        .css_name("main-box")
+        .build();
+
 
     let label = Label::builder()
         .label("0")
@@ -77,30 +102,59 @@ fn build_ui(app: &Application) {
 
     let button = Button::builder()
         .child(&label)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(12)
-        .margin_end(12)
+        .build();
+
+    button.style_context()
+        .add_provider(&css_prov,gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    let label2 = Label::builder()
+        .label("0")
+        .build();
+
+    label2.set_attributes(Some(&attr_list));
+
+
+
+    let button2 = Button::builder()
+        .child(&label2)
         .build();
 
     let number = Rc::new(Cell::new(0));
 
     button.connect_clicked(clone!(
+        #[weak]
+        number,
         #[strong]
-        button,
+        label,
+        #[strong]
+        label2,
+        move |_| {
+            number.set(number.get() + 1);
+            label.set_label(&number.get().to_string());
+            label2.set_label(&number.get().to_string());
+        }
+    ));
+
+    button2.connect_clicked(clone!(
+        #[strong]
+        label2,
         #[strong]
         label,
         move |_| {
-            number.set(number.get() + 1);
+            number.set(number.get() - 1);
+            label2.set_label(&number.get().to_string());
             label.set_label(&number.get().to_string());
         }
     ));
 
+    main_container.append(&button);
+    main_container.append(&button2);
+
+
     // create window and set title
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("Hello World")
-        .child(&button)
+        .child(&main_container)
         .build();
 
     LayerShell::init_layer_shell(&window);
@@ -115,4 +169,9 @@ fn build_ui(app: &Application) {
     window.set_decorated(true);
     window.present();
     
+}
+
+fn init_style(provider: &impl IsA<gtk::StyleProvider>) {
+    let display = gtk::gdk::Display::default();
+    gtk::style_context_add_provider_for_display(&display.unwrap(),provider,gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
