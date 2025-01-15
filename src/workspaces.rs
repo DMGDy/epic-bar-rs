@@ -15,6 +15,8 @@ const EVENTS: [&str;5] = [
             "movewindow",
 ];
 
+pub const WORKSPACE_COUNT: usize = 9;
+
 /* for this program:
  *  tag: the index of the workspace
  *  workspace: the actual thing containing the windows
@@ -78,6 +80,7 @@ fn get_windows() -> Vec<Window>{
     let mut buff = String::new();
     sock.read_to_string(&mut buff).unwrap();
 
+
     let mut iter = buff.split_whitespace().peekable();
 
     let mut done = false;
@@ -88,6 +91,7 @@ fn get_windows() -> Vec<Window>{
     let mut address = String::with_capacity(8);
     let mut tag = usize::default();
     let mut order = usize::default();
+    let mut tag= usize::default();
 
     while let Some(key) = iter.next() {
         match key {
@@ -119,13 +123,21 @@ fn get_windows() -> Vec<Window>{
             "focusHistoryID:" => {
                 order = iter.peek().unwrap().parse().unwrap();
                 done = true;
-            }
+            },
+            
             "Window" => {
                 address = iter.peek().unwrap().to_string();
             },
+
             "class:" => {
                 class = peek_until_newline(&mut iter, "title:").trim_end().to_string();
-            }
+            },
+
+            "ID" => {
+                tag = iter.peek().unwrap().parse().unwrap();
+                done = true;
+                break;
+            },
 
             _ => {}
         };
@@ -166,57 +178,10 @@ fn assign_tags_to_win(all_wins: AllWindows) -> Workspaces {
    workspaces 
 }
 
-fn gen_eww_widget(workspace: &Workspaces) {
-    let mut sorted_workspaces: Vec<_> = workspace
-        .into_iter()
-        .collect();
-
-    // sort by recently used
-    sorted_workspaces.sort_by(|w1,w2| w1.1.order.cmp(&w2.1.order));
-
-    print!("(box :class \"window-container\" \
-                 :space-evenly false");
-    for (_,workspace) in sorted_workspaces {
-        print!("(box ");
-
-        if workspace.active {
-            print!(":class \"active-workspace\" ")
-        } else {
-            print!(":class \"workspace\" ");
-        }
-        print!(":space-evenly false ");
-        print!("(label :class \"tag-id\" :text \"{}\" )",workspace.tag);
-        for window in &workspace.windows {
-            print!("(button :class \"window-tab\"");
-                print!(":onclick \
-                    \"$HOME/.config/eww/eww-windows/target/release/eww-windows {}\" \
-                    ",window.address);
-                print!("(box ");
-                if window.order == 0 {
-                    print!(":class \"active-window\" ");
-                } else {
-                    print!(":class \"inactive-window\" ");
-                }
-                print!(":tooltip \"{}\" ",window.info);
-                print!(":space-evenly false \
-                (box :class \"win-icon\" \
-                :style \
-                \"background-image:\
-                url('icons/{}.svg');\") \
-                (box :class \"win-title\" \
-                (label :limit-width 16 \
-                :text \"{}\" ))",window.class,window.name);
-                print!("))")
-        }
-        print!(")")
-    }
-    println!(")");
-}
-
 /* read hyprland socket2 to see if there is 
  * activity on workspace or winndow change
 */ 
-fn is_activity()  -> bool {
+pub async fn is_activity()  -> bool {
     let sock = UnixStream::connect(
         format!("{}/hypr/{}/.socket2.sock",
             env::var("XDG_RUNTIME_DIR").unwrap(),
@@ -261,16 +226,63 @@ fn swich_window(adr: String) {
 
 }
 
-pub fn get_workspaces() -> Workspaces{
+fn check_empty_active_workspace(workspaces: &mut Workspaces) {
+    let mut sock = UnixStream::connect(
+        format!("{}/hypr/{}/.socket.sock",
+            env::var("XDG_RUNTIME_DIR").unwrap(),
+            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
+        )).unwrap();
 
-    let mut workspaces;
+    let _ = sock.write_all(b"activeworkspace");
 
-    loop {
-        if is_activity() {
-            let all_windows = get_windows();
-            workspaces = assign_tags_to_win(all_windows);
-            break;
-        }
+    let mut buff = String::new();
+    sock.read_to_string(&mut buff).unwrap();
+
+
+    let mut iter = buff.split_whitespace().peekable();
+
+    let mut tag  = usize::default();
+
+    while let Some(key) = iter.next() {
+        match key {
+            "ID" => {
+                tag = iter.peek().unwrap().parse().unwrap();
+            },
+
+            _ => {}
+        };
     }
+
+    workspaces.entry(tag)
+        .or_insert( (|| { 
+            let w = Workspace {
+                windows: Vec::new(),
+                active:  true,
+                tag,
+                order: 0,
+            };
+            w
+        })());
+
+    let mut order = 1;
+    for (wtag,workspace) in workspaces {
+        if wtag == &tag {
+            continue;
+        }
+
+        workspace.order = order;
+        order += 1;
+    }
+
+
+}
+
+pub fn get_workspaces() -> Workspaces {
+
+
+    let all_windows = get_windows();
+    let mut workspaces = assign_tags_to_win(all_windows);
+    check_empty_active_workspace(&mut workspaces);
+
     workspaces
 }
