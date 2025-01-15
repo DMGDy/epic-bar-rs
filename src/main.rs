@@ -21,11 +21,8 @@ use std::{
     clone::Clone,
 };
 
-use glib::clone;
-
 use gtk::{
     prelude::*,
-    glib,
     Application,
     ApplicationWindow,
     Button,
@@ -33,18 +30,15 @@ use gtk::{
     Box,
     Orientation,
     CssProvider,
-    StyleContext,
-    gdk::{
-        Display,
-    
-    },
+    gdk::Display,
     pango::{
         FontDescription,
         Weight,
         SCALE,
         AttrFontDesc,
         AttrList
-    }
+    },
+    glib
     
 };
 
@@ -53,6 +47,8 @@ use gtk4_layer_shell::{
     Layer,
     Edge,
 };
+
+mod workspaces;
 
 const FONT_SIZE: i32 = 12;
 const APP_ID: &str = "org.gtk_rs.epic_bar";
@@ -92,63 +88,42 @@ fn top_bar(app: &Application) {
         .css_name("main-box")
         .build();
 
-
-    let label = Label::builder()
-        .label("0")
+    let workspace_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(0)
+        .css_name("workspaces-container")
         .build();
 
-    label.set_attributes(Some(&attr_list));
+    // init the container
+    for n in 1..workspaces::WORKSPACE_COUNT+1 {
+        let workspace_button = gtk::Button::builder()
+            .label(format!("{}",n))
+            .name(format!("{}",n))
+            .visible(false)
+            .build();
+        workspace_container.append(&workspace_button);
+    }
 
+    populate_workspace_box(&workspace_container);
+    let workspace_container_copy = workspace_container.clone();
 
-    let button = Button::builder()
-        .child(&label)
-        .build();
-
-    button.style_context()
-        .add_provider(&css_prov,gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
-
-    let label2 = Label::builder()
-        .label("0")
-        .build();
-
-    label2.set_attributes(Some(&attr_list));
-
-
-
-    let button2 = Button::builder()
-        .child(&label2)
-        .build();
-
-    let number = Rc::new(Cell::new(0));
-
-    button.connect_clicked(clone!(
-        #[weak]
-        number,
-        #[strong]
-        label,
-        #[strong]
-        label2,
-        move |_| {
-            number.set(number.get() + 1);
-            label.set_label(&number.get().to_string());
-            label2.set_label(&number.get().to_string());
+    glib::MainContext::default().spawn_local(async move {
+        loop {
+            if workspaces::is_activity().await {
+                let workspace_copy_copy = workspace_container_copy.clone();
+                glib::idle_add_local_once(move || {
+                    populate_workspace_box(&workspace_copy_copy);
+                });
+            }
+            glib::timeout_future(std::time::Duration::from_millis(50)).await;
         }
-    ));
+    });
 
-    button2.connect_clicked(clone!(
-        #[strong]
-        label2,
-        #[strong]
-        label,
-        move |_| {
-            number.set(number.get() - 1);
-            label2.set_label(&number.get().to_string());
-            label.set_label(&number.get().to_string());
-        }
-    ));
+    main_container.append(&workspace_container);
 
-    main_container.append(&button);
-    main_container.append(&button2);
+
+
+    println!("here");
 
 
     // create window and set title
@@ -168,10 +143,34 @@ fn top_bar(app: &Application) {
 
     window.set_decorated(true);
     window.present();
-    
+
+
+
 }
 
 fn init_style(provider: &impl IsA<gtk::StyleProvider>) {
     let display = gtk::gdk::Display::default();
-    gtk::style_context_add_provider_for_display(&display.unwrap(),provider,gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    gtk::style_context_add_provider_for_display(
+        &display.unwrap(),
+        provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+}
+
+fn populate_workspace_box(workspace_container: &gtk::Box){
+
+    let workspaces = workspaces::get_workspaces();
+    let mut ws_opt = workspace_container.first_child();
+
+    while let Some(ref workspace) = ws_opt {
+        let tag:usize = workspace.widget_name().as_str().parse().unwrap();
+        let workspace_info_opt = workspaces.get(&tag);
+        if let Some(_) = workspace_info_opt {
+                workspace.set_visible(true);
+        }
+        else {
+            workspace.set_visible(false);
+        }
+        ws_opt = workspace.next_sibling();
+    }
+
 }
