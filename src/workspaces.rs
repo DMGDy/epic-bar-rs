@@ -91,7 +91,6 @@ fn get_windows() -> Vec<Window>{
     let mut address = String::with_capacity(8);
     let mut tag = usize::default();
     let mut order = usize::default();
-    let mut tag= usize::default();
 
     while let Some(key) = iter.next() {
         match key {
@@ -131,12 +130,6 @@ fn get_windows() -> Vec<Window>{
 
             "class:" => {
                 class = peek_until_newline(&mut iter, "title:").trim_end().to_string();
-            },
-
-            "ID" => {
-                tag = iter.peek().unwrap().parse().unwrap();
-                done = true;
-                break;
             },
 
             _ => {}
@@ -181,7 +174,7 @@ fn assign_tags_to_win(all_wins: AllWindows) -> Workspaces {
 /* read hyprland socket2 to see if there is 
  * activity on workspace or winndow change
 */ 
-pub async fn is_activity()  -> bool {
+pub fn is_activity()  -> bool {
     let sock = UnixStream::connect(
         format!("{}/hypr/{}/.socket2.sock",
             env::var("XDG_RUNTIME_DIR").unwrap(),
@@ -212,7 +205,7 @@ pub async fn is_activity()  -> bool {
 
 }
 
-fn swich_window(adr: String) {
+pub fn swich_window(adr: String) {
     let mut sock = UnixStream::connect(
         format!("{}/hypr/{}/.socket.sock",
             env::var("XDG_RUNTIME_DIR").unwrap(),
@@ -224,6 +217,20 @@ fn swich_window(adr: String) {
             "dispatch focuswindow address:0x{adr}"
     ).as_bytes());
 
+}
+
+pub fn switch_workspace(tag: usize) {
+
+     let mut sock = UnixStream::connect(
+        format!("{}/hypr/{}/.socket.sock",
+            env::var("XDG_RUNTIME_DIR").unwrap(),
+            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
+        )).unwrap();
+
+    let _ = sock.write_all(format!(
+            "dispatch workspace {tag}"
+    ).as_bytes());
+   
 }
 
 fn check_empty_active_workspace(workspaces: &mut Workspaces) {
@@ -278,7 +285,6 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) {
 }
 
 pub fn get_workspaces() -> Workspaces {
-
 
     let all_windows = get_windows();
     let mut workspaces = assign_tags_to_win(all_windows);
