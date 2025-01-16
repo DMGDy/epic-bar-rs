@@ -16,20 +16,17 @@
 */
 
 use std::{
-    rc::Rc,
-    cell::Cell,
-    clone::Clone,
+    thread,
+    sync::mpsc,
 };
 
 use gtk::{
     prelude::*,
     Application,
     ApplicationWindow,
-    Button,
-    Label,
     Box,
     Orientation,
-    CssProvider,
+    gio,
     gdk::Display,
     pango::{
         FontDescription,
@@ -38,8 +35,7 @@ use gtk::{
         AttrFontDesc,
         AttrList
     },
-    glib
-    
+    glib,
 };
 
 use gtk4_layer_shell::{
@@ -94,37 +90,31 @@ fn top_bar(app: &Application) {
         .css_name("workspaces-container")
         .build();
 
+
     // init the container
     for n in 1..workspaces::WORKSPACE_COUNT+1 {
         let workspace_button = gtk::Button::builder()
             .label(format!("{}",n))
             .name(format!("{}",n))
-            .visible(false)
+            .visible(true)
+            .focus_on_click(true)
             .build();
+
+        let nclone = n.clone();
+
+
+        workspace_button.connect_clicked( move |_| {
+            gio::spawn_blocking(move || {
+                workspaces::switch_workspace(nclone);
+            });
+        });
+
         workspace_container.append(&workspace_button);
     }
 
     populate_workspace_box(&workspace_container);
-    let workspace_container_copy = workspace_container.clone();
-
-    glib::MainContext::default().spawn_local(async move {
-        loop {
-            if workspaces::is_activity().await {
-                let workspace_copy_copy = workspace_container_copy.clone();
-                glib::idle_add_local_once(move || {
-                    populate_workspace_box(&workspace_copy_copy);
-                });
-            }
-            glib::timeout_future(std::time::Duration::from_millis(50)).await;
-        }
-    });
 
     main_container.append(&workspace_container);
-
-
-
-    println!("here");
-
 
     // create window and set title
     let window = ApplicationWindow::builder()
@@ -144,12 +134,31 @@ fn top_bar(app: &Application) {
     window.set_decorated(true);
     window.present();
 
+    let (tx,rx) = mpsc::channel();
+    let workspace_clone = workspace_container.clone();
 
+    thread::spawn(move || {
+        loop {
+            thread::sleep(std::time::Duration::from_millis(100));
+            if workspaces::is_activity() {
+                tx.send(()).unwrap();
+            }
+        }
+    });
 
+    glib::source::idle_add_local(
+        move || {
+            thread::sleep(std::time::Duration::from_millis(100));
+            if let Ok(_) = rx.try_recv() {
+                populate_workspace_box(&workspace_clone);
+            }
+            glib::ControlFlow::Continue
+        }
+    );
 }
 
 fn init_style(provider: &impl IsA<gtk::StyleProvider>) {
-    let display = gtk::gdk::Display::default();
+    let display = Display::default();
     gtk::style_context_add_provider_for_display(
         &display.unwrap(),
         provider,
@@ -164,7 +173,7 @@ fn populate_workspace_box(workspace_container: &gtk::Box){
     while let Some(ref workspace) = ws_opt {
         let tag:usize = workspace.widget_name().as_str().parse().unwrap();
         let workspace_info_opt = workspaces.get(&tag);
-        if let Some(_) = workspace_info_opt {
+        if let Some(workspace_info) = workspace_info_opt {
                 workspace.set_visible(true);
         }
         else {
