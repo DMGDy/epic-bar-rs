@@ -48,7 +48,9 @@ mod workspaces;
 
 const FONT_SIZE: i32 = 12;
 const APP_ID: &str = "org.gtk_rs.epic_bar";
-const BUTTON_DEFAULT: &str = "button { border-radius: 0px; }";
+const BUTTON_DEFAULT: &str = "*{ font-family: 'Ubuntu Nerd Font', 'Ubuntu', sans-serif;} \
+                              button { border-radius: 0px; margin: 0px; padding: 0px 4px } \
+                              .active {background-color:#4BA3FF; color: #fbf1c7; transition: 0.05s ease-in-out;}";
     
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -80,7 +82,6 @@ fn top_bar(app: &Application) {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(1)
-        .tooltip_text("test box")
         .css_name("main-box")
         .build();
 
@@ -139,7 +140,7 @@ fn top_bar(app: &Application) {
 
     thread::spawn(move || {
         loop {
-            thread::sleep(std::time::Duration::from_millis(100));
+            thread::sleep(std::time::Duration::from_millis(50));
             if workspaces::is_activity() {
                 tx.send(()).unwrap();
             }
@@ -148,13 +149,14 @@ fn top_bar(app: &Application) {
 
     glib::source::idle_add_local(
         move || {
-            thread::sleep(std::time::Duration::from_millis(100));
+            thread::sleep(std::time::Duration::from_millis(50));
             if let Ok(_) = rx.try_recv() {
                 populate_workspace_box(&workspace_clone);
             }
             glib::ControlFlow::Continue
         }
     );
+
 }
 
 fn init_style(provider: &impl IsA<gtk::StyleProvider>) {
@@ -175,6 +177,12 @@ fn populate_workspace_box(workspace_container: &gtk::Box){
         let workspace_info_opt = workspaces.get(&tag);
         if let Some(workspace_info) = workspace_info_opt {
                 workspace.set_visible(true);
+                if(workspace_info.order == 0) {
+                    workspace.add_css_class("active");
+                }
+                else {
+                    workspace.remove_css_class("active");
+                }
         }
         else {
             workspace.set_visible(false);
