@@ -26,8 +26,8 @@ show system information:
 ## TO-DO
 Things to do in order of priority: 
 
-1. [ ] Have workspaces visible, differentiating active status
-    1. [ ] Clickable to switch to workspace
+1. [X] Have workspaces visible, differentiating active status
+    1. [X] Clickable to switch to workspace
 2. [ ] Show basic system information
     1. [ ] Battery status
     2. [ ] Calendar
