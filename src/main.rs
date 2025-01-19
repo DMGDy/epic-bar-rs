@@ -17,6 +17,8 @@
 use std::{
     thread,
     sync::mpsc,
+    rc::Rc,
+    cell::Cell,
 };
 
 use gtk::{
@@ -39,6 +41,7 @@ use gtk::{
         AttrList
     },
     glib,
+    glib::clone,
 };
 
 use gtk4_layer_shell::{
@@ -52,12 +55,11 @@ mod status;
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 // TODO: figure out how to not repeat fonts in css classes/ set universal font
-const CSS_DEFAULT: &str = "$icon_size: 20px; $font_size: 12px; \
+const CSS_DEFAULT: &str = "\
                            window { font-family: 'Cascadia Code', sans-serif;} \
-                           button {  font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 4px } \
+                           button { font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 4px; \
+                           font-size: 16px;} \
                            .active { background-color:#4BA3FF; color: #fbf1c7; transition: 0.05s ease-in-out;}";
-
-const BATTERY_ICON_TABLE: [&str;5] = [ "","","","",""];
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -112,17 +114,18 @@ fn top_bar(app: &Application) {
         .hexpand(false)
         .build();
 
+    // reveal text if clicked, or hovered
     let battery_icon = Button::builder()
         .label("")
         .css_name("battery-icon")
         .name("battery-icon")
+        .visible(true)
         .build();
     
-    // status revealer should only contain label
-
     let battery_label = Button::builder()
         .label("N/A")
         .vexpand(false)
+        .visible(false)
         .css_name("battery-label")
         .name("battery-label")
         .build();
@@ -130,25 +133,29 @@ fn top_bar(app: &Application) {
     battery_container.append(&battery_icon);
     battery_container.append(&battery_label);
 
-    status_revealed_container.append(&status_reveal_button);
-
-    status_revealer.set_child(Some(&status_revealed_container));
-
-    let sr_clone = status_revealer.clone();
-
-    status_reveal_button.connect_clicked(move |btn| {
-        if !sr_clone.is_child_revealed() {
-            btn.set_label("󰬭");
-        } else {
-            btn.set_label("󰬧");
-        }
-
-        // update internal revealers
-        sr_clone.set_reveal_child(!sr_clone.is_child_revealed());
-    });
-
     status_container.append(&status_reveal_button);
-    status_container.append(&status_revealer);
+    status_container.append(&battery_container);
+
+
+    let toggle = Rc::new(Cell::new(false));
+
+    status_reveal_button.connect_clicked(clone!(
+        #[weak]
+        status_reveal_button,
+        #[weak]
+        battery_label,
+        move |_| {
+            if !toggle.get() {
+                status_reveal_button.set_label("󰁋");
+                toggle.set(true);
+            } else {
+                status_reveal_button.set_label("󰁚");
+                toggle.set(false);
+            }
+            battery_label.set_visible(toggle.get());
+
+        }
+    ));
 
     // init the container
     for n in 1..workspaces::WORKSPACE_COUNT+1 {
@@ -203,25 +210,44 @@ fn top_bar(app: &Application) {
 
     // check if workspace activity in different thread to avoid blocking
     thread::spawn(move || {
-
-        thread::sleep(std::time::Duration::from_millis(25));
-
-        if workspaces::is_activity() {
-            tx.send(()).unwrap();
+        loop {
+            thread::sleep(std::time::Duration::from_millis(25));
+            if workspaces::is_activity() {
+                tx.send(()).unwrap();
+            }
         }
-
     });
 
 
     // on main threadm check if signal recieved that there is to update 
     // lets update everything else here too
     glib::source::idle_add_local(move || {
+
         thread::sleep(std::time::Duration::from_millis(25));
-        if let Ok(_) = rx.try_recv() {
-            populate_workspace_box(&workspace_clone);
-        }
+            if let Ok(_) = rx.try_recv() {
+                populate_workspace_box(&workspace_clone);
+            }
         let battery = status::get_battery();
-        battery_label.set_label(&status::get_battery());
+        battery_label.set_label(&battery);
+
+
+        let icon = match battery.parse::<i32>().unwrap() {
+            0..=10=> "󱃍",
+            11..=19=>"󰁺",
+            20..=29=>"󰁻",
+            30..=39=>"󰁼",
+            40..=49=>"󰁽",
+            50..=59=>"󰁾",
+            60..=69=>"󰁿",
+            70..=79=>"󰂀",
+            80..=89=>"󰂁",
+            90..=94=>"󰂂",
+            95..=99=>"󰁹",
+            100=>"󱈏",
+            _=> "󱉞"
+        };
+
+        battery_icon.set_label(&icon);
 
         glib::ControlFlow::Continue
     });
