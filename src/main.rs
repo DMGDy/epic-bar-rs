@@ -1,19 +1,19 @@
 /*
-   Copyright (C) 2025  Dylan Dy OR Dylan-Matthew Garza
-
-   This program is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <https://www.gnu.org/licenses/>.
-   */
+*   Copyright (C) 2025  Dylan Dy OR Dylan-Matthew Garza
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
 use std::{
     thread,
     sync::mpsc,
@@ -26,22 +26,17 @@ use gtk::{
     Application,
     ApplicationWindow,
     Box,
-    Revealer,
-    RevealerTransitionType,
+    Label,
     Button,
     Orientation,
     Align,
     gio,
     gdk::Display,
-    pango::{
-        FontDescription,
-        Weight,
-        SCALE,
-        AttrFontDesc,
-        AttrList
+    glib::{
+        clone,
+        ControlFlow
     },
-    glib,
-    glib::clone,
+    glib
 };
 
 use gtk4_layer_shell::{
@@ -56,10 +51,15 @@ mod status;
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 // TODO: figure out how to not repeat fonts in css classes/ set universal font
 const CSS_DEFAULT: &str = "\
-                           window { font-family: 'Cascadia Code', sans-serif;} \
-                           button { font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 4px; \
-                           font-size: 16px;} \
-                           .active { background-color:#4BA3FF; color: #fbf1c7; transition: 0.05s ease-in-out;}";
+                           window { font-family: 'Cascadia Code', sans-serif; } \
+                           button { font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; } \
+                           box { font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; } \
+                           status-reveal-button { font-size:22px; border-right: 1px ridge white; padding: 0px 4px 0px 0px;} \
+                           battery-icon { padding: 0px 2px; font-size: 20px; } \
+                           battery-label { padding: 0px 0px; } \
+                           .active { background-color:#4BA3FF; color: #fbf1c7; transition: 0.05s ease-in-out; } \
+                           date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; } \
+                           ";
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -105,9 +105,9 @@ fn top_bar(app: &Application) {
     
     // button to reveal all statuses
     let status_reveal_button = Button::builder()
+        .css_name("status-reveal-button")
         .label("󰁚")
         .build();
-
 
     let battery_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -130,8 +130,21 @@ fn top_bar(app: &Application) {
         .name("battery-label")
         .build();
 
+    let date_container = Button::builder()
+        .css_name("date-container")
+        .build();
+
+    let date_label= Label::builder()
+        .lines(2)
+        .css_name("date-label")
+        .name("date-label")
+        .label("date\ntime")
+        .build();
+
     battery_container.append(&battery_icon);
     battery_container.append(&battery_label);
+
+    date_container.set_child(Some(&date_label));
 
     status_container.append(&status_reveal_button);
     status_container.append(&battery_container);
@@ -183,6 +196,7 @@ fn top_bar(app: &Application) {
     main_container.append(&workspace_container);
     main_container.append(&spacer);
     main_container.append(&status_container);
+    main_container.append(&date_container);
 
     // create window and set title
     let window = ApplicationWindow::builder()
@@ -203,11 +217,8 @@ fn top_bar(app: &Application) {
     window.present();
 
     let (tx,rx) = mpsc::channel();
+
     let workspace_clone = workspace_container.clone();
-
-    let battery_icon = battery_icon.clone();
-    let battery_label = battery_label.clone();
-
     // check if workspace activity in different thread to avoid blocking
     thread::spawn(move || {
         loop {
@@ -218,38 +229,32 @@ fn top_bar(app: &Application) {
         }
     });
 
+    let battery_icon = battery_icon.clone();
+    let battery_label = battery_label.clone();
+    let date_container = date_container.clone();
 
     // on main threadm check if signal recieved that there is to update 
     // lets update everything else here too
     glib::source::idle_add_local(move || {
 
+
         thread::sleep(std::time::Duration::from_millis(25));
-            if let Ok(_) = rx.try_recv() {
-                populate_workspace_box(&workspace_clone);
-            }
-        let battery = status::get_battery();
-        battery_label.set_label(&battery);
+        let dt = status::get_datetime();
 
+        date_container.set_label(&format!("{dt}"));
 
-        let icon = match battery.parse::<i32>().unwrap() {
-            0..=10=> "󱃍",
-            11..=19=>"󰁺",
-            20..=29=>"󰁻",
-            30..=39=>"󰁼",
-            40..=49=>"󰁽",
-            50..=59=>"󰁾",
-            60..=69=>"󰁿",
-            70..=79=>"󰂀",
-            80..=89=>"󰂁",
-            90..=94=>"󰂂",
-            95..=99=>"󰁹",
-            100=>"󱈏",
-            _=> "󱉞"
-        };
+        if let Ok(_) = rx.try_recv() {
+            populate_workspace_box(&workspace_clone);
+        }
 
-        battery_icon.set_label(&icon);
+        let battery = status::get_battery_info();
+        let mut bl = battery.capacity.to_string();
+        bl.push_str("%");
+        battery_label.set_label(&bl);
 
-        glib::ControlFlow::Continue
+        battery_icon.set_label(&battery.icon);
+
+        ControlFlow::Continue
     });
 
 }
