@@ -93,7 +93,7 @@ fn get_icon() -> String {
         },
         "Not charging" => {
             match charge {
-                100=> "󱈑".to_string(),
+                97..=100=> "󱈑".to_string(),
                 _ => "󱃍".to_string()
             }
         }
