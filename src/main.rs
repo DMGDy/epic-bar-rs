@@ -277,7 +277,7 @@ fn populate_workspace_box(workspace_container: &Box){
         let workspace_info_opt = workspaces.get(&tag);
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
-            if workspace_info.order == 0 {
+            if workspace_info.order == 1 {
                 workspace.add_css_class("active");
             }
 
@@ -373,7 +373,7 @@ fn bottom_bar(app: &Application) {
 fn populate_windows_container(container: &Box) {
     let workspaces = workspaces::get_workspaces();
 
-    let sorted: &mut Vec<_> = &mut workspaces
+    let mut sorted: &mut Vec<_> = &mut workspaces
         .into_iter()
         .collect();
 
@@ -390,19 +390,20 @@ fn populate_windows_container(container: &Box) {
     }
 
     // start filling with occupied workspaces
-    for (_,workspace) in sorted {
+    for (tag,workspace) in sorted {
         // Box will contain 
         //  - label of tag
         //  - button for each window
         //      - child is box has icon
         //          - Initial_title of application
+        println!("{tag}");
         let workspace_box = Box::builder()
-            .name(format!("{}",workspace.tag))
+            .name(format!("{}",tag))
             .vexpand(false)
             .build();
 
         let label = Label::builder()
-            .label(format!("{} ",workspace.tag))
+            .label(format!("{} ",tag))
             .build();
 
         workspace_box.append(&label);
