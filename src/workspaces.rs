@@ -31,12 +31,12 @@ pub const WORKSPACE_COUNT: usize = 9;
  * order: 0 meaning active, the order of when it was used
  */
 pub struct Window {
-    name: String,
-    info: String,
-    address: String,
-    class: String,
-    tag: usize,
-    order: usize 
+    pub name: String,
+    pub info: String,
+    pub address: String,
+    pub class: String,
+    pub tag: usize,
+    pub order: usize 
 }
 
 // sorted by order (revent activity)
@@ -266,19 +266,15 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) {
                 windows: Vec::new(),
                 active:  true,
                 tag,
-                order: 0,
+                order: 1,
             };
             w
         })());
 
     let mut order = 1;
-    for (wtag,workspace) in workspaces {
-        if wtag == &tag {
-            continue;
-        }
 
-        workspace.order = order;
-        order += 1;
+    for (wtag,workspace) in workspaces {
+        workspace.order += 1;
     }
 
 
