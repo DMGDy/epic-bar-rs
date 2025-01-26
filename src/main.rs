@@ -64,6 +64,7 @@ const CSS_DEFAULT: &str = "\
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(top_bar);
+    app.connect_activate(bottom_bar);
 
     app.run()
 }
@@ -84,8 +85,6 @@ fn top_bar(app: &Application) {
         .homogeneous(false)
         .css_name("main-box")
         .build();
-
-    main_container.set_hexpand(true);
 
     let workspace_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -235,6 +234,7 @@ fn top_bar(app: &Application) {
 
     // on main threadm check if signal recieved that there is to update 
     // lets update everything else here too
+
     glib::source::idle_add_local(move || {
 
 
@@ -267,27 +267,162 @@ fn init_style(provider: &impl IsA<gtk::StyleProvider>) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
-fn populate_workspace_box(workspace_container: &gtk::Box){
+fn populate_workspace_box(workspace_container: &Box){
 
     let workspaces = workspaces::get_workspaces();
     let mut ws_opt = workspace_container.first_child();
 
     while let Some(ref workspace) = ws_opt {
-        let tag:usize = workspace.widget_name().as_str().parse().unwrap();
+        let tag :usize = workspace.widget_name().as_str().parse().unwrap();
         let workspace_info_opt = workspaces.get(&tag);
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
-            if(workspace_info.order == 0) {
+            if workspace_info.order == 0 {
                 workspace.add_css_class("active");
             }
+
             else {
                 workspace.remove_css_class("active");
             }
         }
         else {
             workspace.set_visible(false);
-        }
+        }    
         ws_opt = workspace.next_sibling();
+    }
+
+}
+
+fn bottom_bar(app: &Application) {
+    
+    let css_prov = gtk::CssProvider::new(); 
+    css_prov.load_from_string(CSS_DEFAULT);
+
+    init_style(&css_prov);
+
+    let main_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .halign(Align::BaselineFill)
+        .hexpand(true)
+        .vexpand(false)
+        .hexpand_set(true)
+        .homogeneous(false)
+        .css_name("main-box")
+        .build();
+
+    let workspace_windows_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .halign(Align::BaselineFill)
+        .hexpand(true)
+        .vexpand(false)
+        .homogeneous(false)
+        .css_name("workspace-windows-container")
+        .build();
+
+    // so minimum vertical space is occupied when displayed
+    let reserve = Button::builder()
+        .label(" ")
+        .build();
+
+    workspace_windows_container.append(&reserve);
+
+
+
+    main_container.append(&workspace_windows_container);
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .child(&main_container)
+        .build();
+
+    LayerShell::init_layer_shell(&window);
+    LayerShell::set_layer(&window,Layer::Top);
+
+    LayerShell::auto_exclusive_zone_enable(&window);
+
+    LayerShell::set_anchor(&window, Edge::Bottom, true);
+    LayerShell::set_anchor(&window, Edge::Left, true);
+    LayerShell::set_anchor(&window, Edge::Right, true);
+
+    window.set_decorated(true);
+    window.present();
+
+    let (tx,rx) = mpsc::channel();
+
+    // check if workspace activity in different thread to avoid blocking
+    thread::spawn(move || {
+        loop {
+            thread::sleep(std::time::Duration::from_millis(25));
+            if workspaces::is_activity() {
+                tx.send(()).unwrap();
+            }
+        }
+    });
+
+    glib::source::idle_add_local(move || {
+        thread::sleep(std::time::Duration::from_millis(25));
+
+         if let Ok(_) = rx.try_recv() {
+            populate_windows_container(&workspace_windows_container);
+        }
+
+        ControlFlow::Continue
+    });
+
+}
+
+fn populate_windows_container(container: &Box) {
+    let workspaces = workspaces::get_workspaces();
+
+    let sorted: &mut Vec<_> = &mut workspaces
+        .into_iter()
+        .collect();
+
+    // sort by recently used
+    sorted.sort_by(|w1,w2| w1.1.order.cmp(&w2.1.order));
+
+    let mut tag_opt = container.first_child();
+
+    while let Some(tag) = tag_opt {
+        // empty container with everything
+        println!("removing");
+        container.remove(&tag);   
+        tag_opt = container.first_child()
+    }
+
+    // start filling with occupied workspaces
+    for (_,workspace) in sorted {
+        // Box will contain 
+        //  - label of tag
+        //  - button for each window
+        //      - child is box has icon
+        //          - Initial_title of application
+        let workspace_box = Box::builder()
+            .name(format!("{}",workspace.tag))
+            .vexpand(false)
+            .build();
+
+        let label = Label::builder()
+            .label(format!("{} ",workspace.tag))
+            .build();
+
+        workspace_box.append(&label);
+
+        for window in &workspace.windows {
+            // have icon theme instead of css
+            let window_button = Button::builder()
+                .css_name("window-box")
+                .build();
+
+             let window_label = Label::builder()
+                .label(format!("{} ",window.name))
+                .build();
+
+            window_button.set_child(Some(&window_label));
+           
+            workspace_box.append(&window_button);
+        }
+        container.append(&workspace_box);
+
     }
 
 }
