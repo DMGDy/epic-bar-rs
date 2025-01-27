@@ -373,7 +373,7 @@ fn bottom_bar(app: &Application) {
 fn populate_windows_container(container: &Box) {
     let workspaces = workspaces::get_workspaces();
 
-    let mut sorted: &mut Vec<_> = &mut workspaces
+    let sorted: &mut Vec<_> = &mut workspaces
         .into_iter()
         .collect();
 
@@ -384,7 +384,6 @@ fn populate_windows_container(container: &Box) {
 
     while let Some(tag) = tag_opt {
         // empty container with everything
-        println!("removing");
         container.remove(&tag);   
         tag_opt = container.first_child()
     }
@@ -396,7 +395,6 @@ fn populate_windows_container(container: &Box) {
         //  - button for each window
         //      - child is box has icon
         //          - Initial_title of application
-        println!("{tag}");
         let workspace_box = Box::builder()
             .name(format!("{}",tag))
             .vexpand(false)
@@ -414,6 +412,11 @@ fn populate_windows_container(container: &Box) {
                 .css_name("window-box")
                 .build();
 
+            let address = window.address.clone();
+            window_button.connect_clicked(move |_| {
+                workspaces::switch_window(&address)
+            });
+
              let window_label = Label::builder()
                 .label(format!("{} ",window.name))
                 .build();
@@ -423,7 +426,5 @@ fn populate_windows_container(container: &Box) {
             workspace_box.append(&window_button);
         }
         container.append(&workspace_box);
-
     }
-
 }
