@@ -205,7 +205,7 @@ pub fn is_activity()  -> bool {
 
 }
 
-pub fn swich_window(adr: String) {
+pub fn switch_window(adr: &String) {
     let mut sock = UnixStream::connect(
         format!("{}/hypr/{}/.socket.sock",
             env::var("XDG_RUNTIME_DIR").unwrap(),
@@ -271,9 +271,7 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) {
             w
         })());
 
-    let mut order = 1;
-
-    for (wtag,workspace) in workspaces {
+    for (_,workspace) in workspaces {
         workspace.order += 1;
     }
 
