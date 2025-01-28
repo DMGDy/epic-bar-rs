@@ -36,6 +36,6 @@ Things to do in order of priority:
     5. [ ] CPU (average core usage or highest core usage?)
     6. [ ] Volume (maybe most difficult)
 3. [ ] Clickeable icon (Functionality TBD)
-4. [ ] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
+4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
     1. [ ] With Icons
 5. [ ] Easy to change colors and fonts with form of config (big maybe)
