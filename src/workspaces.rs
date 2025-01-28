@@ -266,13 +266,16 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) {
                 windows: Vec::new(),
                 active:  true,
                 tag,
-                order: 1,
+                order: 0,
             };
             w
         })());
 
     for (_,workspace) in workspaces {
-        workspace.order += 1;
+        if workspace.tag != tag {
+            workspace.order += 1;
+            workspace.active = false;
+        }
     }
 
 
