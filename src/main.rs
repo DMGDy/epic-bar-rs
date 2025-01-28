@@ -31,6 +31,8 @@ use gtk::{
     Orientation,
     Align,
     gio,
+    CssProvider,
+    StyleProvider,
     gdk::Display,
     glib::{
         clone,
@@ -57,7 +59,7 @@ const CSS_DEFAULT: &str = "\
                            status-reveal-button { font-size:22px; border-right: 1px ridge white; padding: 0px 4px 0px 0px;} \
                            battery-icon { padding: 0px 2px; font-size: 20px; } \
                            battery-label { padding: 0px 0px; } \
-                           .active { background-color:#4BA3FF; color: #fbf1c7; transition: 0.05s ease-in-out; } \
+                           .active { background-color:#4BA3FF; color: #fbf1c7; transition: color 1s; } \
                            date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; } \
                            ";
 
@@ -72,7 +74,7 @@ fn main() -> glib::ExitCode {
 fn top_bar(app: &Application) {
 
     // default css props
-    let css_prov = gtk::CssProvider::new(); 
+    let css_prov = CssProvider::new(); 
     css_prov.load_from_string(CSS_DEFAULT);
 
     init_style(&css_prov);
@@ -259,7 +261,7 @@ fn top_bar(app: &Application) {
 
 }
 
-fn init_style(provider: &impl IsA<gtk::StyleProvider>) {
+fn init_style(provider: &impl IsA<StyleProvider>) {
     let display = Display::default();
     gtk::style_context_add_provider_for_display(
         &display.unwrap(),
@@ -277,7 +279,7 @@ fn populate_workspace_box(workspace_container: &Box){
         let workspace_info_opt = workspaces.get(&tag);
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
-            if workspace_info.order == 1 {
+            if workspace_info.active {
                 workspace.add_css_class("active");
             }
 
@@ -295,7 +297,7 @@ fn populate_workspace_box(workspace_container: &Box){
 
 fn bottom_bar(app: &Application) {
     
-    let css_prov = gtk::CssProvider::new(); 
+    let css_prov = CssProvider::new(); 
     css_prov.load_from_string(CSS_DEFAULT);
 
     init_style(&css_prov);
@@ -358,11 +360,14 @@ fn bottom_bar(app: &Application) {
         }
     });
 
+
+    let mut window_styles: Vec<std::boxed::Box<CssProvider>> = Vec::new();
+
     glib::source::idle_add_local(move || {
         thread::sleep(std::time::Duration::from_millis(25));
 
          if let Ok(_) = rx.try_recv() {
-            populate_windows_container(&workspace_windows_container);
+            populate_windows_container(&workspace_windows_container,&mut window_styles);
         }
 
         ControlFlow::Continue
@@ -370,7 +375,7 @@ fn bottom_bar(app: &Application) {
 
 }
 
-fn populate_windows_container(container: &Box) {
+fn populate_windows_container(container: &Box,providers: &mut Vec<std::boxed::Box<CssProvider>>) {
     let workspaces = workspaces::get_workspaces();
 
     let sorted: &mut Vec<_> = &mut workspaces
@@ -382,11 +387,23 @@ fn populate_windows_container(container: &Box) {
 
     let mut tag_opt = container.first_child();
 
+    let display = Display::default();
+
+    // clear out all providers from display
+    for provider in &mut *providers {
+        gtk::style_context_remove_provider_for_display(
+            &display.clone().unwrap(),
+            &*provider.clone()
+        );
+    }
+    providers.clear();
+
     while let Some(tag) = tag_opt {
         // empty container with everything
         container.remove(&tag);   
         tag_opt = container.first_child()
     }
+
 
     // start filling with occupied workspaces
     for (tag,workspace) in sorted {
@@ -406,25 +423,50 @@ fn populate_windows_container(container: &Box) {
 
         workspace_box.append(&label);
 
+        if workspace.windows.is_empty() {
+            let window_button = Button::builder()
+                .css_name("window-box-empty")
+                .label("󰟢")
+                .build();
+
+            workspace_box.append(&window_button);
+        }
+
         for window in &workspace.windows {
             // have icon theme instead of css
             let window_button = Button::builder()
-                .css_name("window-box")
+                .css_name(&format!("window-box.{}",window.class))
                 .build();
+            // create new css provider for background of button
+            // setting icon wouldnt allow any child widgets
+            let css_prov = std::boxed::Box::new(CssProvider::new());
+            css_prov.load_from_string(&format!(
+                    "window-box.{} {{ \
+                     background-image: url('file://icons/{}.svg'); \
+                    }}", window.class,window.class
+            ));
+
+            println!("{:?}",css_prov.to_str());
+            providers.push(css_prov);
+            
 
             let address = window.address.clone();
             window_button.connect_clicked(move |_| {
                 workspaces::switch_window(&address)
             });
 
-             let window_label = Label::builder()
+            let window_label = Label::builder()
                 .label(format!("{} ",window.name))
                 .build();
 
             window_button.set_child(Some(&window_label));
-           
+
             workspace_box.append(&window_button);
         }
         container.append(&workspace_box);
     }
-}
+    // set the added css styles
+    for provider in providers {
+        init_style(&*provider.clone());
+    }
+} 
