@@ -34,11 +34,7 @@ use gtk::{
     CssProvider,
     StyleProvider,
     Image,
-    gdk::{
-        Display,
-        gdk_pixbuf::Pixbuf,
-        MemoryTextureBuilder
-    },
+    gdk::Display,
     glib::{
         clone,
         ControlFlow,
