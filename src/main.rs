@@ -436,22 +436,7 @@ fn populate_windows_container(container: &Box) {
             let icon_label_box = Box::builder()
                 .build();
             
-            let path_str = format!("icons/{}.svg",window.class);
-
-            // create pixbuf to bytes -> memorytexturebuilder->set height,width,stride then build
-            // into Texture (implements Paintable trait) -> into Image (GtkWidget)
-            let pixbuf = Pixbuf::from_file_at_size(&path_str,512,512).expect("incorrect file");
-            let bytes = pixbuf.read_pixel_bytes();
-            println!("{:?}",bytes.len());
-            let texture_builder = MemoryTextureBuilder::new();
-
-            texture_builder.set_bytes(Some(&bytes));
-            texture_builder.set_height(512);
-            texture_builder.set_width(512);
-            texture_builder.set_stride(512*4);
-
-            let texture = texture_builder.build();
-            let icon = Image::from_paintable(Some(&texture));
+            let icon = Image::from_file(&format!("icons/{}.svg",window.class));
 
             icon_label_box.append(&icon);
 
