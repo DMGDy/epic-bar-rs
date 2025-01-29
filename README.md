@@ -2,7 +2,7 @@
 
 # epic bar
 
-:warning: **This is very early in development**: Currently unusable as it is being developed still !
+:warning: **This is very early in development**: Kinda usable now (as of commti 45cf433)
 
 This aims to reimplement a bar using [Eww widgets](https://github.com/elkowar/eww) that I made myself 
 [here](https://github.com/DMGDy/eww-bar) as a standalone program using [GTK4](https://docs.gtk.org/gtk4/) 
@@ -37,5 +37,5 @@ Things to do in order of priority:
     6. [ ] Volume (maybe most difficult)
 3. [ ] Clickeable icon (Functionality TBD)
 4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
-    1. [ ] With Icons
+    1. [X] With Icons
 5. [ ] Easy to change colors and fonts with form of config (big maybe)
