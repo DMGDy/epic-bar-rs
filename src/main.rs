@@ -33,10 +33,15 @@ use gtk::{
     gio,
     CssProvider,
     StyleProvider,
-    gdk::Display,
+    Image,
+    gdk::{
+        Display,
+        gdk_pixbuf::Pixbuf,
+        MemoryTextureBuilder
+    },
     glib::{
         clone,
-        ControlFlow
+        ControlFlow,
     },
     glib
 };
@@ -361,13 +366,12 @@ fn bottom_bar(app: &Application) {
     });
 
 
-    let mut window_styles: Vec<std::boxed::Box<CssProvider>> = Vec::new();
 
     glib::source::idle_add_local(move || {
         thread::sleep(std::time::Duration::from_millis(25));
 
          if let Ok(_) = rx.try_recv() {
-            populate_windows_container(&workspace_windows_container,&mut window_styles);
+            populate_windows_container(&workspace_windows_container);
         }
 
         ControlFlow::Continue
@@ -375,7 +379,7 @@ fn bottom_bar(app: &Application) {
 
 }
 
-fn populate_windows_container(container: &Box,providers: &mut Vec<std::boxed::Box<CssProvider>>) {
+fn populate_windows_container(container: &Box) {
     let workspaces = workspaces::get_workspaces();
 
     let sorted: &mut Vec<_> = &mut workspaces
@@ -386,17 +390,6 @@ fn populate_windows_container(container: &Box,providers: &mut Vec<std::boxed::Bo
     sorted.sort_by(|w1,w2| w1.1.order.cmp(&w2.1.order));
 
     let mut tag_opt = container.first_child();
-
-    let display = Display::default();
-
-    // clear out all providers from display
-    for provider in &mut *providers {
-        gtk::style_context_remove_provider_for_display(
-            &display.clone().unwrap(),
-            &*provider.clone()
-        );
-    }
-    providers.clear();
 
     while let Some(tag) = tag_opt {
         // empty container with everything
@@ -439,17 +432,30 @@ fn populate_windows_container(container: &Box,providers: &mut Vec<std::boxed::Bo
                 .build();
             // create new css provider for background of button
             // setting icon wouldnt allow any child widgets
-            let css_prov = std::boxed::Box::new(CssProvider::new());
-            css_prov.load_from_string(&format!(
-                    "window-box.{} {{ \
-                     background-image: url('file://icons/{}.svg'); \
-                    }}", window.class,window.class
-            ));
-
-            println!("{:?}",css_prov.to_str());
-            providers.push(css_prov);
             
+            let icon_label_box = Box::builder()
+                .build();
+            
+            let path_str = format!("icons/{}.svg",window.class);
 
+            // create pixbuf to bytes -> memorytexturebuilder->set height,width,stride then build
+            // into Texture (implements Paintable trait) -> into Image (GtkWidget)
+            let pixbuf = Pixbuf::from_file_at_size(&path_str,512,512).expect("incorrect file");
+            let bytes = pixbuf.read_pixel_bytes();
+            println!("{:?}",bytes.len());
+            let texture_builder = MemoryTextureBuilder::new();
+
+            texture_builder.set_bytes(Some(&bytes));
+            texture_builder.set_height(512);
+            texture_builder.set_width(512);
+            texture_builder.set_stride(512*4);
+
+            let texture = texture_builder.build();
+            let icon = Image::from_paintable(Some(&texture));
+
+            icon_label_box.append(&icon);
+
+            window_button.set_child(Some(&icon_label_box));
             let address = window.address.clone();
             window_button.connect_clicked(move |_| {
                 workspaces::switch_window(&address)
@@ -459,14 +465,11 @@ fn populate_windows_container(container: &Box,providers: &mut Vec<std::boxed::Bo
                 .label(format!("{} ",window.name))
                 .build();
 
-            window_button.set_child(Some(&window_label));
+            icon_label_box.append(&window_label);
 
             workspace_box.append(&window_button);
         }
         container.append(&workspace_box);
     }
     // set the added css styles
-    for provider in providers {
-        init_style(&*provider.clone());
-    }
-} 
+}
