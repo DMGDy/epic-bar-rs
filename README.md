@@ -2,7 +2,11 @@
 
 # epic bar
 
-:warning: **This is very early in development**: Kinda usable now (as of commti 45cf433)
+:warning: **This is in development(missing several modules)**: It doesnt look to bad now
+
+[First progress image](sample/update1.png "Current State")
+
+
 
 This aims to reimplement a bar using [Eww widgets](https://github.com/elkowar/eww) that I made myself 
 [here](https://github.com/DMGDy/eww-bar) as a standalone program using [GTK4](https://docs.gtk.org/gtk4/) 
@@ -18,10 +22,14 @@ Most of the modules and behavior of what the bar should show has been implemente
 several compiled tools (although specifically for the the Eww widgets), so naturally I would like 
 to implement all of it on its own. Here are the tools that generate Eww code to dynamically show widgets/
 show system information:
+
 * [workspaces](https://github.com/DMGDy/eww-workspaces)
 * [statuses](https://github.com/DMGDy/statuses)
 * [more statuses (in Rust)](https://github.com/DMGDy/statuses-rs)
 * [Open windows in workspaces](https://github.com/DMGDy/eww-windows)
+
+I previously relied on Rust crates to obtain information such as Netowrk and Wi-fi information but 
+I will plan on simply using D-bus to interact with these services.
 
 ## TO-DO
 Things to do in order of priority: 
