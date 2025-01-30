@@ -57,7 +57,7 @@ const APP_ID: &str = "org.gtk_rs.epic_bar";
 const CSS_DEFAULT: &str = "\
                            window { font-family: 'Fira Sans', sans-serif; } \
                            button { font-family: 'Fira Sans', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; \
-                           color:white;} \
+                           color:white; background-color: rgba(0,0,0,0);} \
                            box { font-family: 'Fira Sans', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; \
                            color:white;} \
                            top-bar {background-image: linear-gradient(
@@ -69,8 +69,8 @@ const CSS_DEFAULT: &str = "\
                            .active { background-color:#4BA3FF; color: #fbf1c7; transition: color 1s; } \
                            date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; color: white;} \
                            bottom-bar {background-image: linear-gradient(
-                           to top,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
-                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%); padding:0px 0 4px 0;}\
+                           to bottom,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
+                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)60%); padding:0px 0 4px 0;}\
                            tag-label{font-size: 12px; color: white; padding: 0px 3px; border-right: 1px solid pink;}\
                            active-window-box {text-shadow: 1px 1px 4px white, 0 0 1em blue, 0 0 0.2em blue; \
                            transition-duration: .3s; color: white; font-size: 14px;}\
@@ -147,7 +147,7 @@ fn top_bar(app: &Application) {
         .name("battery-icon")
         .visible(true)
         .build();
-    
+
     let battery_label = Button::builder()
         .label("N/A")
         .vexpand(false)
@@ -178,6 +178,7 @@ fn top_bar(app: &Application) {
 
     let toggle = Rc::new(Cell::new(false));
 
+    // close/open all status modules
     status_reveal_button.connect_clicked(clone!(
         #[weak]
         status_reveal_button,
@@ -193,6 +194,15 @@ fn top_bar(app: &Application) {
             }
             battery_label.set_visible(toggle.get());
 
+        }
+    ));
+
+    // individual clicking of icon to expand
+    battery_icon.connect_clicked(clone!(
+        #[weak]
+        battery_label,
+        move |_| {
+            battery_label.set_visible(!battery_label.get_visible());
         }
     ));
 
@@ -328,19 +338,19 @@ fn bottom_bar(app: &Application) {
 
     init_style(&css_prov);
 
+
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
         .hexpand(true)
-        .vexpand(false)
         .hexpand_set(true)
         .homogeneous(false)
         .css_name("main-box")
         .build();
 
+
     let workspace_windows_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .halign(Align::BaselineFill)
         .hexpand(true)
         .vexpand(true)
         .homogeneous(false)
@@ -354,23 +364,37 @@ fn bottom_bar(app: &Application) {
 
     workspace_windows_container.append(&reserve);
 
+    // needed for no shrinking in screenshot mode
+    let fill = Box::builder()
+        .hexpand(true)
+        .halign(Align::BaselineFill)
+        .build();
+
+    let fill2 = Button::builder()
+        .hexpand(true)
+        .build();
+
+
+
 
 
     main_container.append(&workspace_windows_container);
+    main_container.append(&fill);
+    main_container.append(&fill2);
     let window = ApplicationWindow::builder()
         .css_name("bottom-bar")
-        .hexpand(true)
+        .resizable(true)
         .application(app)
         .child(&main_container)
         .build();
     LayerShell::init_layer_shell(&window);
-    LayerShell::set_layer(&window,Layer::Bottom);
+    LayerShell::set_layer(&window,Layer::Top);
 
     LayerShell::auto_exclusive_zone_enable(&window);
 
     LayerShell::set_anchor(&window, Edge::Bottom, true);
-    LayerShell::set_anchor(&window, Edge::Left, true);
     LayerShell::set_anchor(&window, Edge::Right, true);
+    LayerShell::set_anchor(&window, Edge::Left, true);
 
     window.set_decorated(true);
     window.present();
