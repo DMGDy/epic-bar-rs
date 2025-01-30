@@ -30,6 +30,7 @@ use gtk::{
     Button,
     Orientation,
     Align,
+    ContentFit,
     gio,
     CssProvider,
     StyleProvider,
@@ -54,14 +55,40 @@ mod status;
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 // TODO: figure out how to not repeat fonts in css classes/ set universal font
 const CSS_DEFAULT: &str = "\
-                           window { font-family: 'Cascadia Code', sans-serif; } \
-                           button { font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; } \
-                           box { font-family: 'Cascadia Code NF', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; } \
+                           window { font-family: 'Fira Sans', sans-serif; } \
+                           button { font-family: 'Fira Sans', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; \
+                           color:white;} \
+                           box { font-family: 'Fira Sans', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; \
+                           color:white;} \
+                           top-bar {background-image: linear-gradient(
+                           to bottom,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
+                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%); \
+                           border-top: 1px solid rgba(255,255,255,0.1);}\
                            status-reveal-button { font-size:22px; border-right: 1px ridge white; padding: 0px 4px 0px 0px;} \
-                           battery-icon { padding: 0px 2px; font-size: 20px; } \
-                           battery-label { padding: 0px 0px; } \
+                           battery-icon { padding: 0px 4px; font-size: 20px; color: white;} \
+                           battery-label { padding: 0px 0px; color: white;} \
                            .active { background-color:#4BA3FF; color: #fbf1c7; transition: color 1s; } \
-                           date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; } \
+                           date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; color: white;} \
+                           bottom-bar {background-image: linear-gradient(
+                           to bottom,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
+                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%); \
+                           border-top: 1px solid rgba(255,255,255,0.1);}\
+                           tag-label{font-size: 12px; color: white; padding: 0px 3px; border-right: 1px solid pink;}\
+                           active-window-box {text-shadow: 1px 1px 4px white, 0 0 1em blue, 0 0 0.2em blue; \
+                           transition-duration: .3s; color: white; font-size: 14px;}\
+                           active-window-box:hover {box-shadow: 0 0 8px white, 0 0 10px white, \
+                           0 0 6px red, 0 0 10px blue;}\
+                           window-box {transition-duration: .3s; color: white; font-size: 14px; border-right: 1px solid white;\
+                           transition: width 1s;}\
+                           window-box:hover {box-shadow: 0 0 8px white, 0 0 10px white, \
+                           0 0 6px red, 0 0 10px blue; }\
+                           window-box-empty{color: purple; text-shadow: 1px 1px 3px red; font-size: 18px; padding: 0px 4px 0px 0px;}\
+                           icon-image{padding: 0px 4px 0px 0px;}\
+                           workspace-window-box-empty {margin: 0px 8px 0px 2px; border: 1px solid red;\
+                           box-shadow: 0 0 4px white, 0 0 6px white, 0 0 10px red, 0 0 2px blue;} \
+                           workspace-window-box-active {margin: 0px 8px 0px 2px; border: 1px solid cyan;\
+                           box-shadow: 0 0 4px white, 0 0 6px white, 0 0 6px red, 0 0 10px blue;transition: width 1s;}\
+                           workspace-window-box { border: 1px solid white; margin: 0px 4px;} 
                            ";
 
 fn main() -> glib::ExitCode {
@@ -203,6 +230,7 @@ fn top_bar(app: &Application) {
     // create window and set title
     let window = ApplicationWindow::builder()
         .application(app)
+        .css_name("top-bar")
         .child(&main_container)
         .build();
 
@@ -333,6 +361,7 @@ fn bottom_bar(app: &Application) {
 
     main_container.append(&workspace_windows_container);
     let window = ApplicationWindow::builder()
+        .css_name("bottom-bar")
         .application(app)
         .child(&main_container)
         .build();
@@ -401,18 +430,30 @@ fn populate_windows_container(container: &Box) {
         //  - button for each window
         //      - child is box has icon
         //          - Initial_title of application
+
+        let workspace_windows_css = if workspace.active && !workspace.windows.is_empty() {
+            "workspace-window-box-active"
+        } else if workspace.windows.is_empty() {
+            "workspace-window-box-empty"
+        } else {
+            "workspace-window-box"
+        };
+
         let workspace_box = Box::builder()
             .name(format!("{}",tag))
+            .css_name(workspace_windows_css)
             .vexpand(false)
             .build();
 
-        let label = Label::builder()
-            .label(format!("{} ",tag))
+        let tag_label = Label::builder()
+            .label(format!("{}",tag))
+            .css_name("tag-label")
             .build();
 
-        workspace_box.append(&label);
+        workspace_box.append(&tag_label);
 
         if workspace.windows.is_empty() {
+
             let window_button = Button::builder()
                 .css_name("window-box-empty")
                 .label("󰟢")
@@ -421,29 +462,45 @@ fn populate_windows_container(container: &Box) {
             workspace_box.append(&window_button);
         }
 
+
         for window in &workspace.windows {
-            // have icon theme instead of css
+
+            // creating box to be child of button
+            // check if active or not
+            let css_name = if window.order == 0 && workspace.order == 0 {
+                "active-window-box".to_owned()
+            } else  {
+                    "window-box".to_owned()
+            };
+
             let window_button = Button::builder()
-                .css_name(&format!("window-box.{}",window.class))
+                .css_name(&css_name)
+                .tooltip_text(&format!("{}",window.info))
                 .build();
-            // create new css provider for background of button
-            // setting icon wouldnt allow any child widgets
-            
+
+
+            // box has icon then label
             let icon_label_box = Box::builder()
                 .build();
             
-            let icon = Image::from_file(&format!("icons/{}.svg",window.class));
+            let icon = Image::builder()
+                .file(&format!("icons/{}.svg",window.class))
+                .css_name("icon-image")
+                .pixel_size(18)
+                .build();
 
             icon_label_box.append(&icon);
 
             window_button.set_child(Some(&icon_label_box));
             let address = window.address.clone();
+            // switch to clicked workspace
             window_button.connect_clicked(move |_| {
                 workspaces::switch_window(&address)
             });
 
             let window_label = Label::builder()
-                .label(format!("{} ",window.name))
+                .label(format!("{}",window.name))
+                .css_name("window-label")
                 .build();
 
             icon_label_box.append(&window_label);
@@ -452,5 +509,4 @@ fn populate_windows_container(container: &Box) {
         }
         container.append(&workspace_box);
     }
-    // set the added css styles
 }
