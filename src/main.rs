@@ -53,7 +53,7 @@ mod workspaces;
 mod status;
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
-// TODO: figure out how to not repeat fonts in css classes/ set universal font
+// This cannot keep going
 const CSS_DEFAULT: &str = "\
                            window { font-family: 'Fira Sans', sans-serif; } \
                            button { font-family: 'Fira Sans', sans-serif; border-radius: 0px; margin: 0px; padding: 0px 5px; \
@@ -78,8 +78,7 @@ const CSS_DEFAULT: &str = "\
                            transition-duration: .3s; color: white; font-size: 14px;}\
                            active-window-box:hover {box-shadow: 0 0 8px white, 0 0 10px white, \
                            0 0 6px red, 0 0 10px blue;}\
-                           window-box {transition-duration: .3s; color: white; font-size: 14px; border-right: 1px solid white;\
-                           transition: width 1s;}\
+                           window-box {transition-duration: .3s; color: white; font-size: 14px; border-right: 1px solid white;}\
                            window-box:hover {box-shadow: 0 0 8px white, 0 0 10px white, \
                            0 0 6px red, 0 0 10px blue; }\
                            window-box-empty{color: purple; text-shadow: 1px 1px 3px red; font-size: 18px; padding: 0px 4px 0px 0px;}\
@@ -87,7 +86,7 @@ const CSS_DEFAULT: &str = "\
                            workspace-window-box-empty {margin: 0px 8px 0px 2px; border: 1px solid red;\
                            box-shadow: 0 0 4px white, 0 0 6px white, 0 0 10px red, 0 0 2px blue;} \
                            workspace-window-box-active {margin: 0px 8px 0px 2px; border: 1px solid cyan;\
-                           box-shadow: 0 0 4px white, 0 0 6px white, 0 0 6px red, 0 0 10px blue;transition: width 1s;}\
+                           box-shadow: 0 0 4px white, 0 0 6px white, 0 0 6px red, 0 0 10px blue;}\
                            workspace-window-box { border: 1px solid white; margin: 0px 4px;} 
                            ";
 
