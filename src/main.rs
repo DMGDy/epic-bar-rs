@@ -62,17 +62,15 @@ const CSS_DEFAULT: &str = "\
                            color:white;} \
                            top-bar {background-image: linear-gradient(
                            to bottom,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
-                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%); \
-                           border-top: 1px solid rgba(255,255,255,0.1);}\
+                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%);}\
                            status-reveal-button { font-size:22px; border-right: 1px ridge white; padding: 0px 4px 0px 0px;} \
                            battery-icon { padding: 0px 4px; font-size: 20px; color: white;} \
                            battery-label { padding: 0px 0px; color: white;} \
                            .active { background-color:#4BA3FF; color: #fbf1c7; transition: color 1s; } \
                            date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; color: white;} \
                            bottom-bar {background-image: linear-gradient(
-                           to bottom,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
-                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%); \
-                           border-top: 1px solid rgba(255,255,255,0.1);}\
+                           to top,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
+                           rgba(10,20,30,0.85)50%,rgba(5,15,25,0.85)70%); padding:0px 0 4px 0;}\
                            tag-label{font-size: 12px; color: white; padding: 0px 3px; border-right: 1px solid pink;}\
                            active-window-box {text-shadow: 1px 1px 4px white, 0 0 1em blue, 0 0 0.2em blue; \
                            transition-duration: .3s; color: white; font-size: 14px;}\
@@ -344,7 +342,7 @@ fn bottom_bar(app: &Application) {
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
         .hexpand(true)
-        .vexpand(false)
+        .vexpand(true)
         .homogeneous(false)
         .css_name("workspace-windows-container")
         .build();
@@ -361,12 +359,12 @@ fn bottom_bar(app: &Application) {
     main_container.append(&workspace_windows_container);
     let window = ApplicationWindow::builder()
         .css_name("bottom-bar")
+        .hexpand(true)
         .application(app)
         .child(&main_container)
         .build();
-
     LayerShell::init_layer_shell(&window);
-    LayerShell::set_layer(&window,Layer::Top);
+    LayerShell::set_layer(&window,Layer::Bottom);
 
     LayerShell::auto_exclusive_zone_enable(&window);
 
@@ -376,7 +374,6 @@ fn bottom_bar(app: &Application) {
 
     window.set_decorated(true);
     window.present();
-
     let (tx,rx) = mpsc::channel();
 
     // check if workspace activity in different thread to avoid blocking
@@ -441,7 +438,7 @@ fn populate_windows_container(container: &Box) {
         let workspace_box = Box::builder()
             .name(format!("{}",tag))
             .css_name(workspace_windows_css)
-            .vexpand(false)
+            .vexpand(true)
             .build();
 
         let tag_label = Label::builder()
