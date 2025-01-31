@@ -66,7 +66,18 @@ const CSS_DEFAULT: &str = "\
                            status-reveal-button { font-size:22px; border-right: 1px ridge white; padding: 0px 4px 0px 0px;} \
                            battery-icon { padding: 0px 4px; font-size: 20px; color: white;} \
                            battery-label { padding: 0px 0px; color: white;} \
-                           .active { background-color:#4BA3FF; color: #fbf1c7; transition: color 1s; } \
+                           .occupied{background: linear-gradient(to bottom, rgba(40,44,52,0.7), rgba(30,33,40,0.7));\
+                           color: rgba(255,255,255,0.5);transition: all 0.2s ease; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);}\
+                           .occupied:hover{background: linear-gradient(to bottom, rgba(50,54,62,0.8),\
+                           rgba(40,43,50,0.8));}
+                           .active {background: linear-gradient(to bottom, rgba(65,105,225,0.8),\
+                           rgba(45,85,205,0.8)); color: rgba(255,255,255,1);\
+                           box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1px 3px rgba(0,0,0,0.2);\
+                           transition: all 0.2s ease;} \
+                           .active:hover{background: linear-gradient(to bottom, rgba(75,115,235,0.9),\
+                           rgba(55,95,215,0.9));} \
+                           .empty-active {background: linear-gradient(to bottom, rgba(180,20,20,0.7),\
+                           rgba(150,15,15,0.7));}
                            date-container { border-left: 1px solid white; font-size: 10px; padding: 0px 4px; color: white;} \
                            bottom-bar {background-image: linear-gradient(
                            to bottom,rgba(15,25,35,0.85)0%,rgba(20,30,40,0.85)40%,\
@@ -217,7 +228,6 @@ fn top_bar(app: &Application) {
 
         let nclone = n.clone();
 
-
         workspace_button.connect_clicked( move |_| {
             gio::spawn_blocking(move || {
                 workspaces::switch_workspace(nclone);
@@ -315,12 +325,18 @@ fn populate_workspace_box(workspace_container: &Box){
         let workspace_info_opt = workspaces.get(&tag);
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
-            if workspace_info.active {
-                workspace.add_css_class("active");
-            }
-
-            else {
+            if workspace_info.active && workspace_info.windows.is_empty() {
+                workspace.remove_css_class("occupied");
                 workspace.remove_css_class("active");
+                workspace.add_css_class("empty-active");
+            } else if workspace_info.active && !workspace_info.windows.is_empty() {
+                workspace.remove_css_class("occupied");
+                workspace.remove_css_class("empty-active");
+                workspace.add_css_class("active");
+            } else {
+                workspace.remove_css_class("active");
+                workspace.remove_css_class("empty-active");
+                workspace.add_css_class("occupied");
             }
         }
         else {
@@ -328,7 +344,6 @@ fn populate_workspace_box(workspace_container: &Box){
         }    
         ws_opt = workspace.next_sibling();
     }
-
 }
 
 fn bottom_bar(app: &Application) {
@@ -373,10 +388,6 @@ fn bottom_bar(app: &Application) {
     let fill2 = Button::builder()
         .hexpand(true)
         .build();
-
-
-
-
 
     main_container.append(&workspace_windows_container);
     main_container.append(&fill);
@@ -497,7 +508,6 @@ fn populate_windows_container(container: &Box) {
                 .css_name(&css_name)
                 .tooltip_text(&format!("{}",window.info))
                 .build();
-
 
             // box has icon then label
             let icon_label_box = Box::builder()
