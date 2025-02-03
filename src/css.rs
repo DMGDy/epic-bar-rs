@@ -38,13 +38,13 @@ status-reveal-button {
 } 
 
 battery-icon { 
-    padding: 0px 4px;
+    padding: 0px 0px 0px 4px;
     font-size: 20px; 
     color: white;
 } 
 
 battery-label { 
-    font-size:10px; 
+    font-size:16px; 
     padding: 0px 0px; 
     color: white;
 } 
