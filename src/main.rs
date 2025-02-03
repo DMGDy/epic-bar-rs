@@ -16,6 +16,7 @@
 */
 use std::{
     thread,
+    time::Duration,
     sync::mpsc,
     rc::Rc,
     cell::Cell,
@@ -106,23 +107,44 @@ fn top_bar(app: &Application) {
         .hexpand(false)
         .build();
 
+    let battery_image = Image::builder()
+        .file("status/battery-missing.svg")
+        .css_name("icon-image")
+        .pixel_size(20)
+        .build();
+
     // reveal text if clicked, or hovered
     let battery_icon = Button::builder()
-        .label("")
         .css_name("battery-icon")
         .name("battery-icon")
-        .has_tooltip(true)
-        .tooltip_text("something")
         .visible(true)
         .build();
 
     let battery_label = Button::builder()
         .label("N/A")
-        .vexpand(false)
-        .visible(false)
+        .hexpand(false)
+        .visible(true)
         .css_name("battery-label")
         .name("battery-label")
         .build();
+
+    let mem_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .hexpand(false)
+        .build();
+
+    let mem_label = Button::builder()
+        .label("N/A")
+        .hexpand(false)
+        .visible(true)
+        .css_name("mem-label")
+        .build();
+
+    let mem_icon = Button::builder()
+        .css_name("mem-icon")
+        .visible(true)
+        .build();
+        
 
     let date_container = Button::builder()
         .css_name("date-container")
@@ -135,6 +157,7 @@ fn top_bar(app: &Application) {
         .label("date\ntime")
         .build();
 
+    battery_icon.set_child(Some(&battery_image));
     battery_container.append(&battery_icon);
     battery_container.append(&battery_label);
 
@@ -142,7 +165,6 @@ fn top_bar(app: &Application) {
 
     status_container.append(&status_reveal_button);
     status_container.append(&battery_container);
-
 
     let toggle = Rc::new(Cell::new(false));
 
@@ -189,7 +211,6 @@ fn top_bar(app: &Application) {
                 workspaces::switch_workspace(nclone);
             });
         });
-
         workspace_container.append(&workspace_button);
     };
 
@@ -225,24 +246,20 @@ fn top_bar(app: &Application) {
     // check if workspace activity in different thread to avoid blocking
     thread::spawn(move || {
         loop {
-            thread::sleep(std::time::Duration::from_millis(25));
+            thread::sleep(Duration::from_millis(50));
             if workspaces::is_activity() {
                 tx.send(()).unwrap();
             }
         }
     });
     
-    let battery_icon = battery_icon.clone();
+    let battery_image = battery_image.clone();
     let battery_label = battery_label.clone();
     let date_container = date_container.clone();
-    let battery_container = battery_container.clone();
-    // on main threadm check if signal recieved that there is to update 
-    // lets update everything else here too
+    // on main thread check if signal recieved that there is to update 
 
-    glib::source::idle_add_local(move || {
+    glib::source::timeout_add_local(Duration::from_millis(50),move || {
 
-
-        thread::sleep(std::time::Duration::from_millis(25));
         let dt = status::get_datetime();
 
         date_container.set_label(&format!("{dt}"));
@@ -251,12 +268,19 @@ fn top_bar(app: &Application) {
             populate_workspace_box(&workspace_clone);
         }
 
+        ControlFlow::Continue
+    });
+
+    // update other stuff less frequently
+    glib::source::timeout_add_seconds_local(1,move || {
         let battery = status::get_battery_info();
         let mut bl = battery.capacity.to_string();
-        bl.push_str("%\n");
-        bl.push_str(&battery.remaining);
+        bl.push_str("%");
         battery_label.set_label(&bl);
-        battery_icon.set_label(&battery.icon);
+        let svg_path = std::path::Path::new(&battery.icon);
+        battery_image.set_from_file(Some(&svg_path));
+        let tooltip_str = battery.tooltip_text;
+        battery_image.set_tooltip_text(Some(&tooltip_str));
         
         ControlFlow::Continue
     });
@@ -271,13 +295,13 @@ fn init_style(provider: &impl IsA<StyleProvider>) {
 }
 
 fn populate_workspace_box(workspace_container: &Box){
-
     let workspaces = workspaces::get_workspaces();
     let mut ws_opt = workspace_container.first_child();
 
     while let Some(ref workspace) = ws_opt {
         let tag :usize = workspace.widget_name().as_str().parse().unwrap();
         let workspace_info_opt = workspaces.get(&tag);
+        // make sure each workspace button has only one active class at a time
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
             if workspace_info.active && workspace_info.windows.is_empty() {
@@ -471,7 +495,7 @@ fn populate_windows_container(container: &Box) {
             let icon = Image::builder()
                 .file(&format!("icons/{}.svg",window.class))
                 .css_name("icon-image")
-                .pixel_size(18)
+                .pixel_size(20)
                 .build();
 
             icon_label_box.append(&icon);
