@@ -49,6 +49,19 @@ battery-label {
     color: white;
 } 
 
+mem-icon { 
+    padding: 0px 0px 0px 4px;
+    font-size: 20px; 
+    color: white;
+} 
+
+mem-label { 
+    font-size:16px; 
+    padding: 0px 0px; 
+    color: white;
+} 
+
+
 .occupied{
     background: linear-gradient(
         to bottom, 
@@ -169,6 +182,8 @@ workspace-window-box {
     border: 1px solid white; 
     margin: 0px 4px;
 } 
+
+
 ";
 
 
