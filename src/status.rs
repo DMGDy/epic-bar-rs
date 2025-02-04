@@ -2,15 +2,19 @@ use std::{
     fs::File,
     io::Read,
     fmt,
+    string,
 };
 
 use time::{OffsetDateTime,format_description};
+
 
 const BATTERY_PERCENTAGE: &str = "/sys/class/power_supply/BAT1/capacity";
 const BATTERY_STATUS: &str = "/sys/class/power_supply/BAT1/status";
 const BATTERY_CHARGE: &str = "/sys/class/power_supply/BAT1/charge_now";
 const BATTERY_CHARGE_FULL: &str = "/sys/class/power_supply/BAT1/charge_full";
 const BATTERY_CURRENT: &str = "/sys/class/power_supply/BAT1/current_now";
+
+const MEMORY_INFO: &str = "/proc/meminfo";
 
 pub struct DateTime {
     pub date: String,
@@ -47,6 +51,8 @@ impl Default for Battery {
 }
 
 pub struct Memory {
+    pub fraction: f64,
+    pub string: String
 }
 
 fn get_battery(b: &mut Battery) {
@@ -123,7 +129,6 @@ fn get_remaining(b: &mut Battery) {
                             ,t_m as u32).to_string();
                     }
 
-
                 },
                 BatteryStatus::Discharging => {
                     // time remaining in seconds
@@ -142,7 +147,6 @@ fn get_remaining(b: &mut Battery) {
                 _ => {()}
             };
 
-
         },
         BatteryStatus::NotCharging => b.remaining = "Fully charged".to_string(),
         _ => b.remaining = "Error getting state".to_string(),
@@ -157,45 +161,47 @@ fn get_icon(b: &mut Battery) {
 
     b.icon = match status {
         BatteryStatus::Charging =>{
+
             match capacity {
-                0..=10=> "status/battery-000-charging.svg".to_string(),
-                11..=19=>"status/battery-010-charging.svg".to_string(),
-                20..=29=>"status/battery-020-charging.svg".to_string(),
-                30..=39=>"status/battery-030-charging.svg".to_string(),
-                40..=49=>"status/battery-040-charging.svg".to_string(),
-                50..=59=>"status/battery-050-charging.svg".to_string(),
-                60..=69=>"status/battery-060-charging.svg".to_string(),
-                70..=79=>"status/battery-070-charging.svg".to_string(),
-                80..=89=>"status/battery-080-charging.svg".to_string(),
-                90..=94=>"status/battery-090-charging.svg".to_string(),
-                95..=100=>"status/battery-100-charging.svg".to_string(),
-                _ => "status/battery-missing.svg".to_string()
+                0..=10=> "assets/status/battery-000-charging.svg".to_string(),
+                11..=19=>"assets/status/battery-010-charging.svg".to_string(),
+                20..=29=>"assets/status/battery-020-charging.svg".to_string(),
+                30..=39=>"assets/status/battery-030-charging.svg".to_string(),
+                40..=49=>"assets/status/battery-040-charging.svg".to_string(),
+                50..=59=>"assets/status/battery-050-charging.svg".to_string(),
+                60..=69=>"assets/status/battery-060-charging.svg".to_string(),
+                70..=79=>"assets/status/battery-070-charging.svg".to_string(),
+                80..=89=>"assets/status/battery-080-charging.svg".to_string(),
+                90..=94=>"assets/status/battery-090-charging.svg".to_string(),
+                95..=100=>"assets/status/battery-100-charging.svg".to_string(),
+                _ => "assets/status/battery-missing.svg".to_string()
             }
         },
-        
+
         BatteryStatus::Discharging => {
             match capacity {
-                0..=10=>  "status/battery-000.svg".to_string(),
-                11..=19=> "status/battery-010.svg".to_string(),
-                20..=29=> "status/battery-020.svg".to_string(),
-                30..=39=> "status/battery-030.svg".to_string(),
-                40..=49=> "status/battery-040.svg".to_string(),
-                50..=59=> "status/battery-050.svg".to_string(),
-                60..=69=> "status/battery-060.svg".to_string(),
-                70..=79=> "status/battery-070.svg".to_string(),
-                80..=89=> "status/battery-080.svg".to_string(),
-                90..=94=> "status/battery-090.svg".to_string(),
-                95..=100=>"status/battery-100.svg".to_string(),
-                _ => "status/battery-missing.svg".to_string()
+                0..=10=>  "assets/status/battery-000.svg".to_string(),
+                11..=19=> "assets/status/battery-010.svg".to_string(),
+                20..=29=> "assets/status/battery-020.svg".to_string(),
+                30..=39=> "assets/status/battery-030.svg".to_string(),
+                40..=49=> "assets/status/battery-040.svg".to_string(),
+                50..=59=> "assets/status/battery-050.svg".to_string(),
+                60..=69=> "assets/status/battery-060.svg".to_string(),
+                70..=79=> "assets/status/battery-070.svg".to_string(),
+                80..=89=> "assets/status/battery-080.svg".to_string(),
+                90..=94=> "assets/status/battery-090.svg".to_string(),
+                95..=100=>"assets/status/battery-100.svg".to_string(),
+                _ => "assets/status/battery-missing.svg".to_string()
             }
         },
+
         BatteryStatus::NotCharging => {
             match capacity {
-                97..=100=> "status/battery-full-charging.svg".to_string(),
-                _ => "status/battery-missing.svg".to_string()
+                97..=100=> "assets/status/battery-full-charging.svg".to_string(),
+                _ => "assets/status/battery-missing.svg".to_string()
             }
         }
-        _ => "status/battery-missing.svg".to_string()
+        _ => "assets/status/battery-missing.svg".to_string()
     }
 }
 
@@ -206,6 +212,9 @@ pub fn get_battery_info() -> Battery {
     get_status(&mut battery);
     get_icon(&mut battery);
     get_remaining(&mut battery);
+
+
+
     get_battery_tooltip_text(&mut battery);
     battery
 }
@@ -220,7 +229,6 @@ fn get_time(dt: &OffsetDateTime) -> String {
     let time = dt.time();
     let format = format_description::parse("[hour]:[minute]:[second]").unwrap();
     time.format(&format).unwrap()
-
 }
 
 pub fn get_datetime() -> DateTime {
@@ -235,5 +243,37 @@ pub fn get_datetime() -> DateTime {
 impl fmt::Display for DateTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f,"{}\n{}",self.date,self.time)
+    }
+}
+
+pub fn get_mem_info() -> Memory {
+    let mut file = File::open(MEMORY_INFO).unwrap();
+    let mut buff = [0;96]; // no need to read entire file
+    file.read_exact(&mut buff).unwrap();
+
+    let binding =  String::from_utf8_lossy(&buff);
+    let mut string = binding.lines();
+
+    let memtotal_kb: f64 = string.nth(0).unwrap()
+        .to_string()
+        .split_whitespace()
+        .nth(1).unwrap()
+        .parse().unwrap();
+
+    let memused_kb: f64 = string.nth(1).unwrap()
+        .to_string()
+        .split_whitespace()
+        .nth(1).unwrap()
+        .parse().unwrap();
+
+    let total = memtotal_kb / 1_048_576.0;
+    let used = (memtotal_kb - memused_kb)/1_048_576.0;
+
+    let string = format!("{:.1}/{:.1} GiB",used,total).to_string();
+    let fraction: f64 = used/total;
+
+    Memory {
+        fraction,
+        string
     }
 }
