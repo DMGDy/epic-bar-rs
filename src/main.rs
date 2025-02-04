@@ -35,6 +35,7 @@ use gtk::{
     CssProvider,
     StyleProvider,
     Image,
+    ProgressBar,
     gdk::Display,
     glib::{
         clone,
@@ -59,7 +60,6 @@ fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(top_bar);
     app.connect_activate(bottom_bar);
-
     app.run()
 }
 
@@ -108,7 +108,7 @@ fn top_bar(app: &Application) {
         .build();
 
     let battery_image = Image::builder()
-        .file("status/battery-missing.svg")
+        .file("assets/status/battery-missing.svg")
         .css_name("icon-image")
         .pixel_size(20)
         .build();
@@ -130,7 +130,13 @@ fn top_bar(app: &Application) {
 
     let mem_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .hexpand(false)
+        .hexpand(true)
+        .build();
+    
+    let mem_icon = Image::builder()
+        .file("assets/devices/memory.svg")
+        .css_name("mem-icon")
+        .visible(true)
         .build();
 
     let mem_label = Button::builder()
@@ -139,12 +145,6 @@ fn top_bar(app: &Application) {
         .visible(true)
         .css_name("mem-label")
         .build();
-
-    let mem_icon = Button::builder()
-        .css_name("mem-icon")
-        .visible(true)
-        .build();
-        
 
     let date_container = Button::builder()
         .css_name("date-container")
@@ -157,6 +157,9 @@ fn top_bar(app: &Application) {
         .label("date\ntime")
         .build();
 
+    mem_container.append(&mem_icon);
+    mem_container.append(&mem_label);
+
     battery_icon.set_child(Some(&battery_image));
     battery_container.append(&battery_icon);
     battery_container.append(&battery_label);
@@ -164,6 +167,8 @@ fn top_bar(app: &Application) {
     date_container.set_child(Some(&date_label));
 
     status_container.append(&status_reveal_button);
+
+    status_container.append(&mem_container);
     status_container.append(&battery_container);
 
     let toggle = Rc::new(Cell::new(false));
@@ -256,6 +261,7 @@ fn top_bar(app: &Application) {
     let battery_image = battery_image.clone();
     let battery_label = battery_label.clone();
     let date_container = date_container.clone();
+    let mem_label = mem_label.clone();
     // on main thread check if signal recieved that there is to update 
 
     glib::source::timeout_add_local(Duration::from_millis(50),move || {
@@ -274,13 +280,20 @@ fn top_bar(app: &Application) {
     // update other stuff less frequently
     glib::source::timeout_add_seconds_local(1,move || {
         let battery = status::get_battery_info();
+
         let mut bl = battery.capacity.to_string();
         bl.push_str("%");
         battery_label.set_label(&bl);
+
         let svg_path = std::path::Path::new(&battery.icon);
         battery_image.set_from_file(Some(&svg_path));
+
         let tooltip_str = battery.tooltip_text;
         battery_image.set_tooltip_text(Some(&tooltip_str));
+
+        let memory = status::get_mem_info();
+
+        mem_label.set_label(&memory.string);
         
         ControlFlow::Continue
     });
@@ -493,7 +506,7 @@ fn populate_windows_container(container: &Box) {
                 .build();
             
             let icon = Image::builder()
-                .file(&format!("icons/{}.svg",window.class))
+                .file(&format!("assets/apps/{}.svg",window.class))
                 .css_name("icon-image")
                 .pixel_size(20)
                 .build();
