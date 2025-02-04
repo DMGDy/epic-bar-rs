@@ -15,6 +15,8 @@ and [gtk-layer-shell](https://github.com/wmww/gtk-layer-shell).
 This will only work on Hyprland as it primarily
 communicates through Hyprland IPC sockets.
 
+Additionally this uses ![Candy icons](https://github.com/EliverLara/candy-icons) and ![Kora](https://github.com/bikass/kora) for the images used in the bar (application icons,battery,RAM)
+
 
 ## why?
 
@@ -40,10 +42,10 @@ Things to do in order of priority:
     1. [X] Battery status
     2. [X] Calendar
     3. [ ] WiFi + WiFi Strength/SSID
-    4. [ ] RAM 
+    4. [X] RAM 
     5. [ ] CPU (average core usage or highest core usage?)
     6. [ ] Volume (maybe most difficult)
 3. [ ] Clickeable icon (Functionality TBD)
 4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
     1. [X] With Icons
-5. [ ] Easy to change colors and fonts with form of config (big maybe)
+5. [X] ~~Easy to change colors and fonts with form of config (big maybe)~~ css.rs 
