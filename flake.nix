@@ -6,9 +6,10 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    flake-compat.url = "https://flakehub.com/f/edolstra/flake-compat/1.tar.gz";
   };
 
-  outputs = { self, nixpkgs, rust-overlay }: 
+  outputs = { self, nixpkgs, rust-overlay, flake-compat}: 
     let
     system = "x86_64-linux";
   overlays = [ (import rust-overlay)  ];
