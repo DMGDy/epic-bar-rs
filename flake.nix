@@ -7,10 +7,9 @@
             url = "github:oxalica/rust-overlay";
             inputs.nixpkgs.follows = "nixpkgs";
         };
-        epic-bar-rs.url = "github:DMGDy/epic-bar-rs";
     };
 
-    outputs = { self, nixpkgs, rust-overlay, epic-bar-rs}: 
+    outputs = { self, nixpkgs, rust-overlay}: 
         let
         system = "x86_64-linux";
     overlays = [ (import rust-overlay) ];
@@ -40,7 +39,6 @@
                 gtk4-layer-shell
                 librsvg
                 libxml2
-                epic-bar-rs.defaultPackage.${system}
             ];
 
             nativeBuildInputs = with pkgs.buildPackages; [
