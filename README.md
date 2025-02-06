@@ -7,7 +7,6 @@
 ![First progress image](sample/update1.png "Current State")
 
 
-
 This aims to reimplement a bar using [Eww widgets](https://github.com/elkowar/eww) that I made myself 
 [here](https://github.com/DMGDy/eww-bar) as a standalone program using [GTK4](https://docs.gtk.org/gtk4/) 
 and [gtk-layer-shell](https://github.com/wmww/gtk-layer-shell). 
@@ -15,7 +14,9 @@ and [gtk-layer-shell](https://github.com/wmww/gtk-layer-shell).
 This will only work on Hyprland as it primarily
 communicates through Hyprland IPC sockets.
 
-Additionally this uses ![Candy icons](https://github.com/EliverLara/candy-icons) and ![Kora](https://github.com/bikass/kora) for the images used in the bar (application icons,battery,RAM)
+Additionally this uses ![Candy icons](https://github.com/EliverLara/candy-icons) and ![Kora](https://github.com/bikass/kora) for the images used in the bar (application icons,battery,RAM).
+
+All content is licensed under GPL-3.
 
 
 ## why?
