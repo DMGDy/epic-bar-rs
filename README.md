@@ -18,6 +18,28 @@ Additionally this uses ![Candy icons](https://github.com/EliverLara/candy-icons)
 
 All content is licensed under GPL-3.
 
+## Trying it out
+If you are on NixOS or using Nix on your system and using Hyprland you can try it out without cloning the repository
+by simply running the following if flake feature is enabled:
+```
+nix run github:DMGDy/epic-bar-rs
+```
+If flake is not enabled, clone repo and then:
+```
+nix-build
+./result/bin/epic-bar-rs
+```
+
+### Modifying and Rebuilding
+If you wanted to make changes to the source and rebuild with flake you can enter a development environment with:
+(note: both will run the Cargo project build)
+```
+nix develop
+```
+or without flake:
+```
+nix-shell
+```
 
 ## why?
 
