@@ -54,6 +54,15 @@ pub struct Workspace {
 
 pub type Workspaces = BTreeMap<usize,Workspace>;
 
+fn get_hyprland_sock(num: Option<&str>) -> UnixStream {
+    UnixStream::connect(
+        format!("{}/hypr/{}/.socket{}.sock",
+            env::var("XDG_RUNTIME_DIR").unwrap(),
+            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap(),
+            num.unwrap_or_default()
+        )).unwrap()
+}
+
 fn peek_until_newline<'a>(iter: &mut Peekable<SplitWhitespace<'a>>,next_line: &str) -> String {
     let mut result = Vec::new();
     while let Some(&word) = iter.peek() {
@@ -69,11 +78,7 @@ fn peek_until_newline<'a>(iter: &mut Peekable<SplitWhitespace<'a>>,next_line: &s
 }
 
 fn get_windows() -> Vec<Window>{
-    let mut sock = UnixStream::connect(
-        format!("{}/hypr/{}/.socket.sock",
-            env::var("XDG_RUNTIME_DIR").unwrap(),
-            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
-        )).unwrap();
+    let mut sock = get_hyprland_sock(None);
 
     let _ = sock.write_all(b"clients");
 
@@ -175,11 +180,7 @@ fn assign_tags_to_win(all_wins: AllWindows) -> Workspaces {
  * activity on workspace or winndow change
 */ 
 pub fn is_activity()  -> bool {
-    let sock = UnixStream::connect(
-        format!("{}/hypr/{}/.socket2.sock",
-            env::var("XDG_RUNTIME_DIR").unwrap(),
-            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
-        )).unwrap();
+    let sock = get_hyprland_sock(Some("2"));
 
     let mut buffer = String::new();
     // for some reason reading socket2 must be buffered
@@ -206,12 +207,8 @@ pub fn is_activity()  -> bool {
 }
 
 pub fn switch_window(adr: &String) {
-    let mut sock = UnixStream::connect(
-        format!("{}/hypr/{}/.socket.sock",
-            env::var("XDG_RUNTIME_DIR").unwrap(),
-            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
-        )).unwrap();
-
+    
+    let mut sock = get_hyprland_sock(None);
     
     let _ = sock.write_all(format!(
             "dispatch focuswindow address:0x{adr}"
@@ -221,11 +218,7 @@ pub fn switch_window(adr: &String) {
 
 pub fn switch_workspace(tag: usize) {
 
-     let mut sock = UnixStream::connect(
-        format!("{}/hypr/{}/.socket.sock",
-            env::var("XDG_RUNTIME_DIR").unwrap(),
-            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
-        )).unwrap();
+    let mut sock = get_hyprland_sock(None);
 
     let _ = sock.write_all(format!(
             "dispatch workspace {tag}"
@@ -234,11 +227,7 @@ pub fn switch_workspace(tag: usize) {
 }
 
 fn check_empty_active_workspace(workspaces: &mut Workspaces) {
-    let mut sock = UnixStream::connect(
-        format!("{}/hypr/{}/.socket.sock",
-            env::var("XDG_RUNTIME_DIR").unwrap(),
-            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
-        )).unwrap();
+    let mut sock = get_hyprland_sock(None);
 
     let _ = sock.write_all(b"activeworkspace");
 
