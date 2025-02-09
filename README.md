@@ -2,9 +2,9 @@
 
 # epic bar
 
-:warning: **This is in development(missing several modules)**: It doesnt look to bad now
+:warning: **This is in development**: Currently the status bar I use every day
 
-![First progress image](sample/update1.png "Current State")
+![First progress image](sample/update2.png "Current State")
 
 
 This aims to reimplement a bar using [Eww widgets](https://github.com/elkowar/eww) that I made myself 
@@ -66,7 +66,9 @@ Things to do in order of priority:
     2. [X] Calendar
     3. [ ] WiFi + WiFi Strength/SSID
     4. [X] RAM 
-    5. [ ] CPU (average core usage or highest core usage?)
+    5. [X] CPU
+        1. [X] Average load through `/stat/proc`
+        2. [X] Frequency accross CPUs averaged from `/sys/devices/system/cpu/cpuX/cpufreq/scaling_cur_freq`
     6. [ ] Volume (maybe most difficult)
 3. [ ] Clickeable icon (Functionality TBD)
 4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
