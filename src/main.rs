@@ -308,11 +308,11 @@ fn top_bar(app: &Application) {
     });
 
     // persisting data to track cpu load over time
-    let mut cpu = status::Cpu::new();
+    let cpu = status::Cpu::new();
     let mut cpu = cpu.clone();
 
     // update other stuff less frequently
-    glib::source::timeout_add_local(Duration::from_millis(750),move || {
+    glib::source::timeout_add_seconds_local(1,move || {
         let battery = status::get_battery_info();
 
         let dt = status::get_datetime();
