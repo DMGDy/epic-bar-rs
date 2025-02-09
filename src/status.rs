@@ -57,7 +57,6 @@ impl Default for Battery {
 }
 
 pub struct Memory {
-    pub fraction: f64,
     pub string: String
 }
 
@@ -81,9 +80,9 @@ impl Cpu {
         file.read_exact(&mut buff).unwrap();
 
         let binding =  String::from_utf8_lossy(&buff);
-        let mut string = binding.lines().nth(0).unwrap().to_string();
+        let string = binding.lines().nth(0).unwrap().to_string();
 
-        let mut cpu_totals = string.split_whitespace();
+        let cpu_totals = string.split_whitespace();
 
         let mut count = 0;
         let mut total_t = 0;
@@ -171,9 +170,9 @@ impl Cpu {
         file.read_exact(&mut buff).unwrap();
 
         let binding =  String::from_utf8_lossy(&buff);
-        let mut string = binding.lines().nth(0).unwrap().to_string();
+        let string = binding.lines().nth(0).unwrap().to_string();
 
-        let mut cpu_totals = string.split_whitespace();
+        let cpu_totals = string.split_whitespace();
 
         let mut count = 0;
         let mut total_t = 0;
@@ -448,10 +447,8 @@ pub fn get_mem_info() -> Memory {
     let used = (memtotal_kb - memused_kb)/1_048_576.0;
 
     let string = format!("{:.1}/{:.1} GiB",used,total).to_string();
-    let fraction: f64 = used/total;
 
     Memory {
-        fraction,
         string
     }
 }
