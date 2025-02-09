@@ -31,15 +31,14 @@ use gtk::{
     Button,
     Orientation,
     Align,
-    gio,
     CssProvider,
     StyleProvider,
     Image,
-    ProgressBar,
+    gio,
     gdk::Display,
     glib::{
-        clone,
         ControlFlow,
+        clone,
     },
     glib
 };
@@ -53,6 +52,8 @@ use gtk4_layer_shell::{
 mod workspaces;
 mod status;
 mod css;
+
+use crate::status::Cpu;
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 // This cannot keep going
@@ -146,6 +147,30 @@ fn top_bar(app: &Application) {
         .css_name("mem-label")
         .build();
 
+    let cpu_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .hexpand(true)
+        .build();
+
+    let cpu_image = Image::builder()
+        .file("assets/status/indicator-cpufreq.svg")
+        .css_name("cpu-image")
+        .pixel_size(20)
+        .build();
+
+    let cpu_label = Button::builder()
+        .label("-------")
+        .hexpand(true)
+        .visible(true)
+        .css_name("cpu-label")
+        .build();
+    
+    let cpu_load_label = Label::builder()
+        .label("------")
+        .hexpand(true)
+        .css_name("cpu-load-label")
+        .build();
+
     let date_container = Button::builder()
         .css_name("date-container")
         .build();
@@ -157,6 +182,10 @@ fn top_bar(app: &Application) {
         .label("date\ntime")
         .build();
 
+    cpu_container.append(&cpu_image);
+    cpu_container.append(&cpu_load_label);
+    cpu_container.append(&cpu_label);
+
     mem_container.append(&mem_icon);
     mem_container.append(&mem_label);
 
@@ -167,7 +196,7 @@ fn top_bar(app: &Application) {
     date_container.set_child(Some(&date_label));
 
     status_container.append(&status_reveal_button);
-
+    status_container.append(&cpu_container);
     status_container.append(&mem_container);
     status_container.append(&battery_container);
 
@@ -262,13 +291,14 @@ fn top_bar(app: &Application) {
     let battery_label = battery_label.clone();
     let date_container = date_container.clone();
     let mem_label = mem_label.clone();
+    let cpu_label = cpu_label.clone();
+    let cpu_load_label = cpu_load_label.clone();
+    let cpu_image = cpu_image.clone();
+
     // on main thread check if signal recieved that there is to update 
 
     glib::source::timeout_add_local(Duration::from_millis(50),move || {
 
-        let dt = status::get_datetime();
-
-        date_container.set_label(&format!("{dt}"));
 
         if let Ok(_) = rx.try_recv() {
             populate_workspace_box(&workspace_clone);
@@ -277,13 +307,18 @@ fn top_bar(app: &Application) {
         ControlFlow::Continue
     });
 
+    // persisting data to track cpu load over time
+    let mut cpu = status::Cpu::new();
+    let mut cpu = cpu.clone();
+
     // update other stuff less frequently
-    glib::source::timeout_add_seconds_local(1,move || {
+    glib::source::timeout_add_local(Duration::from_millis(750),move || {
         let battery = status::get_battery_info();
 
-        let mut bl = battery.capacity.to_string();
-        bl.push_str("%");
-        battery_label.set_label(&bl);
+        let dt = status::get_datetime();
+        date_container.set_label(&format!("{dt}"));
+
+        battery_label.set_label(&format!("{}%",battery.capacity));
 
         let svg_path = std::path::Path::new(&battery.icon);
         battery_image.set_from_file(Some(&svg_path));
@@ -294,6 +329,12 @@ fn top_bar(app: &Application) {
         let memory = status::get_mem_info();
 
         mem_label.set_label(&memory.string);
+
+        cpu_label.set_label(&Cpu::get_avg_freq());
+        let cpu_load = cpu.get_cpu_load();
+        cpu_load_label.set_label(&format!("{:.2}%",cpu_load));
+
+        cpu_image.set_from_file(Some(&cpu.get_cpu_image()));
         
         ControlFlow::Continue
     });
@@ -406,7 +447,7 @@ fn bottom_bar(app: &Application) {
     // check if workspace activity in different thread to avoid blocking
     thread::spawn(move || {
         loop {
-            thread::sleep(std::time::Duration::from_millis(25));
+            thread::sleep(Duration::from_millis(25));
             if workspaces::is_activity() {
                 tx.send(()).unwrap();
             }
@@ -416,7 +457,7 @@ fn bottom_bar(app: &Application) {
 
 
     glib::source::idle_add_local(move || {
-        thread::sleep(std::time::Duration::from_millis(25));
+        thread::sleep(Duration::from_millis(25));
 
          if let Ok(_) = rx.try_recv() {
             populate_windows_container(&workspace_windows_container);
@@ -493,7 +534,7 @@ fn populate_windows_container(container: &Box) {
             let css_name = if window.order == 0 && workspace.order == 0 {
                 "active-window-box".to_owned()
             } else  {
-                    "window-box".to_owned()
+                "window-box".to_owned()
             };
 
             let window_button = Button::builder()
