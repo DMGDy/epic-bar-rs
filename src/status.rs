@@ -1,8 +1,8 @@
 use std::{
     fs::File,
     io::Read,
+    thread,
     fmt,
-    string,
 };
 
 use time::{OffsetDateTime,format_description};
@@ -15,6 +15,12 @@ const BATTERY_CHARGE_FULL: &str = "/sys/class/power_supply/BAT1/charge_full";
 const BATTERY_CURRENT: &str = "/sys/class/power_supply/BAT1/current_now";
 
 const MEMORY_INFO: &str = "/proc/meminfo";
+
+const CPU_STAT: &str = "/proc/stat";
+// ex. path: /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
+const CPU_COUNT: usize = 16;
+const CPU_FREQ_PREF: &str = "/sys/devices/system/cpu/cpu"; //followed by cpu number
+const CPU_FREQ_POST: &str = "/cpufreq/scaling_cur_freq";
 
 pub struct DateTime {
     pub date: String,
@@ -53,6 +59,178 @@ impl Default for Battery {
 pub struct Memory {
     pub fraction: f64,
     pub string: String
+}
+
+#[derive(Clone, Copy)]
+pub struct Cpu {
+    total_load1: u32,
+    non_idle_load1: u32,
+    total_load2: u32,
+    non_idle_load2: u32,
+
+    pub avg_load:f32
+}
+
+impl Cpu {
+
+    pub fn new() -> Self {
+        let mut file = File::open(CPU_STAT).expect("Error opening /proc/stat");
+        // just need first line of aggregate CPU usage measurements
+        let mut buff = [0;64]; 
+
+        file.read_exact(&mut buff).unwrap();
+
+        let binding =  String::from_utf8_lossy(&buff);
+        let mut string = binding.lines().nth(0).unwrap().to_string();
+
+        let mut cpu_totals = string.split_whitespace();
+
+        let mut count = 0;
+        let mut total_t = 0;
+        let mut idle_t = u32::default();
+        // cpu user nice system idle iowait irq softirq ... ... ... 
+        //      ^    ^     ^     *     ^     ^     ^                
+        //  0   1    2     3     4     5     6     7                
+        // add idle seperately
+        for field in cpu_totals {
+            match count {
+                0 => {
+                    println!("skipping \"{field}\"");
+                    count += 1;
+                    continue;
+                },
+                4|5 => {
+                    println!("idle \"{field}\"");
+                    count += 1;
+                    idle_t += field.parse::<u32>().unwrap_or(0);
+                    continue;
+                },
+                8 => break,
+                _ => {
+                    count += 1;
+                }
+            }
+
+            total_t += field.parse::<u32>().unwrap_or(0);
+        }
+         // sum non-idle times
+        // total time with idle time
+        // delta between total time AND Non-idle times
+        // ((total_time - non_idle_time) / total_time) * 100 = avg load
+        let total_load = total_t + idle_t;
+        let non_idle_load = total_t;
+
+        Cpu {
+            total_load1: total_load,
+            non_idle_load1: non_idle_load,
+            total_load2: 0,
+            non_idle_load2: 0,
+            avg_load: 0.0
+        }
+    }
+
+    pub fn get_avg_freq() -> String {
+        // get all paths for CPUs
+        let cpu_freq_paths: Vec<String> = (0..CPU_COUNT)
+            .map(|n| format!("{CPU_FREQ_PREF}{n}{CPU_FREQ_POST}"))
+            .collect();
+
+        let mut handles = Vec::new();
+
+        // each handle should be the frequency in Hz
+        for path in cpu_freq_paths {
+            let handle = thread::spawn(move || {
+                let mut file = File::open(path).unwrap();
+                let mut buff = String::new();
+
+                let _ = file.read_to_string(&mut buff);
+
+                buff.trim_end().parse::<f32>().unwrap()
+            });
+            handles.push(handle);
+        }
+        
+        let mut total = 0.0f32;
+        for handle in handles {
+            total += handle.join().expect("Thread panicked");
+        }
+    
+        let freq_sum = total/(CPU_COUNT as f32 * 1_000_000.0);
+            if freq_sum < 1.0 {
+                format!("{:.0} MHz",freq_sum*1000.0).to_string()
+            } else {
+                format!("{:.1} GHz",freq_sum).to_string()
+            }
+    }
+
+    pub fn get_cpu_load(&mut self) -> f32{
+        let mut file = File::open(CPU_STAT).expect("Error opening /proc/stat");
+        // just need first line of aggregate CPU usage measurements
+        let mut buff = [0;64]; 
+
+        file.read_exact(&mut buff).unwrap();
+
+        let binding =  String::from_utf8_lossy(&buff);
+        let mut string = binding.lines().nth(0).unwrap().to_string();
+
+        let mut cpu_totals = string.split_whitespace();
+
+        let mut count = 0;
+        let mut total_t = 0;
+        let mut idle_t = u32::default();
+        // cpu user nice system idle iowait irq softirq ... ... ... 
+        //      ^    ^     ^     *     *     ^     ^                
+        //  0   1    2     3     4     5     6     7                
+        // add idle seperately
+        for field in cpu_totals {
+            match count {
+                0 => {
+                    count += 1;
+                    continue;
+                },
+                4|5 => {
+                    count += 1;
+                    idle_t += field.parse::<u32>().unwrap_or(0);
+                    continue;
+                },
+                8 => break,
+                _ => {
+                    count += 1;
+                }
+            }
+
+            total_t += field.parse::<u32>().unwrap_or(0);
+        }
+    
+        // sum non-idle times
+        // total time with idle time
+        // delta between total time AND Non-idle times
+        // ((total_time - non_idle_time) / total_time) * 100 = avg load
+
+        self.total_load2 = self.total_load1;
+        self.non_idle_load2 = self.non_idle_load1;
+
+        self.total_load1 = total_t + idle_t;
+        self.non_idle_load1 = total_t;
+
+        let delta_total = self.total_load1 - self.total_load2;
+        let delta_non_idle = self.non_idle_load1 - self.non_idle_load2;
+
+        self.avg_load = (delta_non_idle as f32/delta_total as f32)*100.0;
+        self.avg_load
+    }
+
+    pub fn get_cpu_image(&self) -> String {
+        match self.avg_load {
+            l if l <= 12.5 => "assets/status/indicator-cpufreq.svg",
+            l if l > 12.5 && l <= 45.0 => "assets/status/indicator-cpufreq-25.svg",
+            l if l > 45.0 && l <= 70.0 => "assets/status/indicator-cpufreq-50.svg",
+            l if l > 70.0 && l <= 90.0 => "assets/status/indicator-cpufreq-75.svg",
+            l if l > 90.0 && l<= 100.0 => "assets/status/indicator-cpufreq-100.svg",
+            _ => "assets/status/indicator-cpufreq.svg"
+        }.to_string()
+    }
+
 }
 
 fn get_battery(b: &mut Battery) {
@@ -105,7 +283,7 @@ fn get_remaining(b: &mut Battery) {
             // get current_now
             let mut file2 = File::open(BATTERY_CURRENT).unwrap();
             let _ = file2.read_to_string(&mut buff);
-            let current = buff.trim_end().parse::<f64>().unwrap();
+            let current = buff.trim_end().parse::<f64>().unwrap_or(0.0f64);
 
             match state {
                 BatteryStatus::Charging =>{
