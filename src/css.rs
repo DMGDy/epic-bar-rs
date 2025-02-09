@@ -50,14 +50,28 @@ battery-label {
 } 
 
 mem-icon { 
-    padding: 0px 0px 0px 4px;
+    padding: 0px 2px 0px 4px;
     font-size: 20px; 
     color: white;
 } 
 
 mem-label { 
     font-size:16px; 
-    padding: 0px 0px; 
+    padding: 0px 4px 0px 0px; 
+    color: white;
+    border-right: 1px solid white;
+} 
+
+cpu-label { 
+    font-size:16px; 
+    padding: 0px 4px 0px 0px; 
+    color: white;
+    border-right: 1px solid white;
+} 
+
+cpu-load-label { 
+    font-size:16px; 
+    padding: 0px 2px; 
     color: white;
 } 
 
