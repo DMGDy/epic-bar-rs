@@ -76,3 +76,4 @@ Things to do in order of priority:
 4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
     1. [X] With Icons
 5. [X] ~~Easy to change colors and fonts with form of config (big maybe)~~ css.rs 
+6. [ ] Stop using `.unwrap()` and implement propper error handling (default values, fallback behavior/values)
