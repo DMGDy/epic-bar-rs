@@ -70,6 +70,9 @@ pub struct Cpu {
     pub avg_load:f32
 }
 
+pub mod Network {
+}
+
 impl Cpu {
 
     pub fn new() -> Self {
@@ -94,12 +97,10 @@ impl Cpu {
         for field in cpu_totals {
             match count {
                 0 => {
-                    println!("skipping \"{field}\"");
                     count += 1;
                     continue;
                 },
                 4|5 => {
-                    println!("idle \"{field}\"");
                     count += 1;
                     idle_t += field.parse::<u32>().unwrap_or(0);
                     continue;
