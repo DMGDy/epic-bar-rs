@@ -54,7 +54,9 @@ show system information:
 * [Open windows in workspaces](https://github.com/DMGDy/eww-windows)
 
 I previously relied on Rust crates to obtain information such as Netowrk and Wi-fi information but 
-I will plan on simply using D-bus to interact with these services.
+~~I will plan on simply using D-bus to interact with these services.~~
+Interacting with Netlink IPC socket to get network information would be much more direct
+and fast.
 
 ## TO-DO
 Things to do in order of priority: 
