@@ -20,6 +20,9 @@ use std::{
     sync::mpsc,
     rc::Rc,
     cell::Cell,
+    path::Path,
+    fs,
+    io,
 };
 
 use gtk::{
@@ -102,6 +105,7 @@ fn top_bar(app: &Application) {
         .css_name("status-reveal-button")
         .label("󰁚")
         .build();
+    let has = has_battery().unwrap_or(false);
 
     let battery_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -128,6 +132,7 @@ fn top_bar(app: &Application) {
         .css_name("battery-label")
         .name("battery-label")
         .build();
+
 
     let mem_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -189,9 +194,11 @@ fn top_bar(app: &Application) {
     mem_container.append(&mem_icon);
     mem_container.append(&mem_label);
 
-    battery_icon.set_child(Some(&battery_image));
-    battery_container.append(&battery_icon);
-    battery_container.append(&battery_label);
+    if has {
+        battery_icon.set_child(Some(&battery_image));
+        battery_container.append(&battery_icon);
+        battery_container.append(&battery_label);
+    }
 
     date_container.set_child(Some(&date_label));
 
@@ -201,33 +208,6 @@ fn top_bar(app: &Application) {
     status_container.append(&battery_container);
 
     let toggle = Rc::new(Cell::new(false));
-
-    // close/open all status modules
-    status_reveal_button.connect_clicked(clone!(
-        #[weak]
-        status_reveal_button,
-        #[weak]
-        battery_label,
-        move |_| {
-            if !toggle.get() {
-                status_reveal_button.set_label("󰁋");
-                toggle.set(true);
-            } else {
-                status_reveal_button.set_label("󰁚");
-                toggle.set(false);
-            }
-            battery_label.set_visible(toggle.get());
-        }
-    ));
-
-    // individual clicking of icon to expand
-    battery_icon.connect_clicked(clone!(
-        #[weak]
-        battery_label,
-        move |_| {
-            battery_label.set_visible(!battery_label.get_visible());
-        }
-    ));
 
     // init the container
     for n in 1..workspaces::WORKSPACE_COUNT+1 {
@@ -287,6 +267,7 @@ fn top_bar(app: &Application) {
         }
     });
     
+    let has = has.clone();
     let battery_image = battery_image.clone();
     let battery_label = battery_label.clone();
     let date_container = date_container.clone();
@@ -313,18 +294,18 @@ fn top_bar(app: &Application) {
 
     // update other stuff less frequently
     glib::source::timeout_add_seconds_local(1,move || {
-        let battery = status::get_battery_info();
+
+        if has {
+            let battery = status::get_battery_info();
+            battery_label.set_label(&format!("{}%",battery.capacity));
+            let svg_path = std::path::Path::new(&battery.icon);
+            battery_image.set_from_file(Some(&svg_path));
+            let tooltip_str = battery.tooltip_text;
+            battery_image.set_tooltip_text(Some(&tooltip_str));
+        }
 
         let dt = status::get_datetime();
         date_container.set_label(&format!("{dt}"));
-
-        battery_label.set_label(&format!("{}%",battery.capacity));
-
-        let svg_path = std::path::Path::new(&battery.icon);
-        battery_image.set_from_file(Some(&svg_path));
-
-        let tooltip_str = battery.tooltip_text;
-        battery_image.set_tooltip_text(Some(&tooltip_str));
 
         let memory = status::get_mem_info();
 
@@ -572,4 +553,18 @@ fn populate_windows_container(container: &Box) {
         }
         container.append(&workspace_box);
     }
+}
+
+fn has_battery() -> io::Result<bool>{
+    let power_supply = Path::new("/sys/class/power_supply");
+    if power_supply.is_dir() {
+        for entry in fs::read_dir(power_supply)? {
+            let entry = entry?;
+            let path = entry.path();
+            let path_name = path.to_str().to_owned().unwrap();
+            return Ok(path_name.contains("BAT"))
+
+        }
+    }
+        return Ok(false)
 }
