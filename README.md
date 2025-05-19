@@ -77,3 +77,8 @@ Things to do in order of priority:
     1. [X] With Icons
 5. [X] ~~Easy to change colors and fonts with form of config (big maybe)~~ css.rs 
 6. [ ] Stop using `.unwrap()` and implement propper error handling (default values, fallback behavior/values)
+
+## Known Issues
+* Only expects and appears on a single display
+* If display is turned off and on, bar is no longer present but process still running
+* Certain Website URLS (or window titles for that matter) crash the bar
