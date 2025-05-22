@@ -82,3 +82,4 @@ Things to do in order of priority:
 * Only expects and appears on a single display
 * If display is turned off and on, bar is no longer present but process still running
 * Certain Website URLS (or window titles for that matter) crash the bar
+* on 64 core cpu, always showing ~96-100% usage
