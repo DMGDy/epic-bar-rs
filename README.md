@@ -83,3 +83,4 @@ Things to do in order of priority:
 * If display is turned off and on, bar is no longer present but process still running
 * Certain Website URLS (or window titles for that matter) crash the bar
 * on 64 core cpu, always showing ~96-100% usage
+* ghostty terminal emulator has no initial title and therefore has no icon or name
