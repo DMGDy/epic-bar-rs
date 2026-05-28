@@ -1,203 +1,286 @@
-// nice
+// Windows 11 Style Theme - Light Mode
 pub const CSS: &str = "
+/* ============================================
+   WINDOWS 11 STYLE THEME - LIGHT
+   ============================================ */
+
+/* Window base */
 window {
-    font-family: 'Fira Sans', sans-serif; 
-} 
+    background-color: #f3f3f3;
+}
 
 button {
-    font-family: 'Fira Sans', sans-serif; 
+    font-family: 'Segoe UI Variable', 'Segoe UI', 'SF Pro', sans-serif;
     border-radius: 0px;
     margin: 0px;
-    padding: 0px 3px; 
-    color: white; 
-    background-color: rgba(0,0,0,0);
+    padding: 5px 10px;
+    color: #1a1a1a;
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    text-shadow: none;
+    -gtk-icon-shadow: none;
+    transition: all 100ms ease;
 }
 
-box { 
-    font-family: 'Fira Sans', sans-serif;
-    border-radius: 0px;
-    margin: 0px;
-    padding: 0px 3px;
-    color: white; 
+button label {
+    color: #1a1a1a;
 }
 
+button:hover {
+    background-color: rgba(0,0,0,0.06);
+    background-image: none;
+}
+
+label {
+    color: #1a1a1a;
+    font-family: 'Segoe UI Variable', 'Segoe UI', 'SF Pro', sans-serif;
+}
+
+box {
+    font-family: 'Segoe UI Variable', 'Segoe UI', 'SF Pro', sans-serif;
+    color: #1a1a1a;
+}
+
+/* ============================================
+   TOP BAR - Windows 11 Style
+   ============================================ */
 top-bar {
-    background-image: linear-gradient(
-        to bottom,
-        rgba(15,25,35,0.85)0%,
-        rgba(20,30,40,0.85)40%,
-        rgba(10,20,30,0.85)50%,
-        rgba(5,15,25,0.85)70%
-    );
+    background-color: #f3f3f3;
+    padding: 0px;
 }
 
-status-reveal-button { 
-    font-size: 22px; 
-    border-right: 1px ridge white; 
-    padding: 0px 4px 0px 0px;
-} 
-
-battery-icon { 
-    padding: 0px 0px 0px 4px;
-    font-size: 20px; 
-    color: white;
-} 
-
-battery-label { 
-    font-size:16px; 
-    padding: 0px 0px; 
-    color: white;
-} 
-
-mem-icon { 
-    padding: 0px 2px 0px 4px;
-    font-size: 20px; 
-    color: white;
-} 
-
-mem-label { 
-    font-size:16px; 
-    padding: 0px 4px 0px 0px; 
-    color: white;
-    border-right: 1px solid white;
-} 
-
-cpu-label { 
-    font-size:16px; 
-    padding: 0px 4px 0px 0px; 
-    color: white;
-    border-right: 1px solid white;
-} 
-
-cpu-load-label { 
-    font-size:16px; 
-    padding: 0px 2px; 
-    color: white;
-} 
-
-
-.occupied{
-    background: linear-gradient(
-        to bottom, 
-        rgba(40,44,52,0.7), 
-        rgba(30,33,40,0.7)
-    );
-    color: rgba(255,255,255,0.5);
-    transition: all 0.2s ease; 
-    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+/* Status reveal button */
+status-reveal-button {
+    font-size: 20px;
+    padding: 5px 10px;
+    margin: 0px;
+    color: #1a1a1a;
 }
 
-.occupied:hover{
-    background: linear-gradient(
-        to bottom, 
-        rgba(50,54,62,0.8),
-        rgba(40,43,50,0.8));
+/* Battery styling */
+battery-icon {
+    padding: 5px 5px;
+    font-size: 18px;
+    color: #1a1a1a;
 }
 
+battery-label {
+    font-size: 15px;
+    padding: 5px 10px 5px 5px;
+    color: rgba(0,0,0,0.8);
+}
+
+/* Memory styling */
+mem-icon {
+    padding: 5px 5px;
+    font-size: 18px;
+    color: #1a1a1a;
+}
+
+mem-label {
+    font-size: 15px;
+    padding: 5px 10px 5px 5px;
+    color: rgba(0,0,0,0.8);
+}
+
+/* CPU styling */
+cpu-label {
+    font-size: 15px;
+    padding: 5px 10px 5px 5px;
+    color: rgba(0,0,0,0.8);
+}
+
+cpu-load-label {
+    font-size: 15px;
+    padding: 5px 5px;
+    color: rgba(0,0,0,0.8);
+}
+
+/* ============================================
+   WORKSPACE BUTTONS - Windows 11 Style
+   ============================================ */
+
+/* Occupied workspace */
+.occupied {
+    background-color: transparent;
+    background-image: none;
+    color: #505050;
+    border-radius: 0px;
+    border: none;
+    margin: 0px;
+    padding: 5px 13px;
+    transition: all 100ms ease;
+    -gtk-icon-style: symbolic;
+}
+
+.occupied label {
+    color: #505050;
+}
+
+.occupied:hover {
+    background-color: rgba(0,0,0,0.06);
+    background-image: none;
+    color: #1a1a1a;
+}
+
+.occupied:hover label {
+    color: #1a1a1a;
+}
+
+/* Active workspace - Windows 11 accent with glow */
 .active {
-    background: linear-gradient(
-        to bottom, 
-        rgba(65,105,225,0.8),
-        rgba(45,85,205,0.8)
-    ); 
-    color: rgba(255,255,255,1);
-    box-shadow: 
-        inset 0 1px 0 rgba(255,255,255,0.1), 
-        0 1px 3px rgba(0,0,0,0.2);
-    transition: all 0.2s ease;
+    background-color: rgba(37,99,235,0.16);
+    background-image: none;
+    color: #1a1a1a;
+    border-radius: 0px;
+    border: none;
+    margin: 0px;
+    padding: 5px 13px;
+    box-shadow: 0 0 10px rgba(37,99,235,0.4);
+    transition: all 100ms ease;
 }
 
-.active:hover{
-    background: linear-gradient(
-        to bottom, 
-        rgba(75,115,235,0.9),
-        rgba(55,95,215,0.9)
-    );
+.active label {
+    color: #1a1a1a;
 }
 
+.active:hover {
+    background-color: rgba(37,99,235,0.24);
+    background-image: none;
+    box-shadow: 0 0 15px rgba(37,99,235,0.5);
+}
+
+/* Empty active workspace */
 .empty-active {
-    background: linear-gradient(
-        to bottom, 
-        rgba(180,20,20,0.7),
-        rgba(150,15,15,0.7)
-    );
+    background-color: transparent;
+    background-image: none;
+    color: #707070;
+    border-radius: 0px;
+    border: none;
+    margin: 0px;
+    padding: 5px 13px;
 }
 
-date-container { 
-    border-left: 1px solid white; 
-    font-size: 10px; padding: 0px 4px; color: white;
+.empty-active label {
+    color: #707070;
 }
 
+/* ============================================
+   DATE/TIME - Windows 11 Style
+   ============================================ */
+date-container {
+    font-size: 15px;
+    padding: 5px 13px;
+    color: #1a1a1a;
+    border-radius: 0px;
+}
+
+date-container:hover {
+    background-color: rgba(0,0,0,0.06);
+}
+
+/* ============================================
+   BOTTOM BAR - Windows 11 Taskbar
+   ============================================ */
 bottom-bar {
-    background-image: linear-gradient(
-        to bottom,
-        rgba(15,25,35,0.85)0%,
-        rgba(20,30,40,0.85)40%,
-        rgba(10,20,30,0.85)50%,
-        rgba(5,15,25,0.85)60%
-    );
-    padding:0px 0 4px 0;
+    background-color: #f3f3f3;
+    padding: 0px;
 }
 
+/* Workspace tag label */
 tag-label {
-    font-size: 12px; 
-    color: white; 
-    padding: 0px 3px; 
-    border-right: 
-    1px solid pink;
+    font-size: 18px;
+    font-weight: 500;
+    color: rgba(0,0,0,0.7);
+    padding: 5px 10px;
+    margin: 0px;
 }
 
+/* ============================================
+   WINDOW BUTTONS - Windows 11 Style
+   ============================================ */
+
+/* Active window - glow effect */
 active-window-box {
-    text-shadow: 1px 1px 4px white, 0 0 1em blue, 0 0 0.2em blue; \
-    transition-duration: .3s;
-    color: white; 
-    font-size: 14px;
+    background-color: rgba(37,99,235,0.12);
+    color: #1a1a1a;
+    font-size: 15px;
+    margin: 0px;
+    padding: 8px 13px;
+    border-radius: 0px;
+    border: none;
+    box-shadow: 0 0 15px rgba(37,99,235,0.5), 0 0 30px rgba(37,99,235,0.24);
+    transition: all 100ms ease;
 }
 
 active-window-box:hover {
-    box-shadow: 0 0 8px white, 0 0 10px white, 0 0 6px red, 0 0 10px blue;
+    background-color: rgba(37,99,235,0.2);
+    box-shadow: 0 0 20px rgba(37,99,235,0.6), 0 0 40px rgba(37,99,235,0.36);
 }
 
+/* Inactive window button */
 window-box {
-    transition-duration: .3s; 
-    color: white; 
-    font-size: 14px; 
-    border-right: 1px solid white;
+    background-color: transparent;
+    color: rgba(0,0,0,0.7);
+    font-size: 15px;
+    margin: 0px;
+    padding: 8px 13px;
+    border-radius: 0px;
+    border: none;
+    transition: all 100ms ease;
 }
 
 window-box:hover {
-    box-shadow: 0 0 8px white, 0 0 10px white, 0 0 6px red, 0 0 10px blue; 
+    background-color: rgba(0,0,0,0.06);
+    color: #1a1a1a;
 }
 
+/* Empty window indicator */
 window-box-empty {
-    color: purple; 
-    text-shadow: 1px 1px 3px red; 
-    font-size: 18px; 
-    padding: 0px 4px 0px 0px;
+    color: rgba(0,0,0,0.3);
+    font-size: 15px;
+    padding: 0px 3px;
 }
 
+/* Icon spacing and background */
 icon-image {
-    padding: 0px 4px 0px 0px;
+    padding: 6px;
+    margin-right: 3px;
+    background-color: rgba(0,0,0,0.06);
+    border-radius: 0px;
 }
 
+/* ============================================
+   WORKSPACE WINDOW CONTAINERS
+   ============================================ */
+
+/* Empty workspace container */
 workspace-window-box-empty {
-    margin: 0px 8px 0px 2px;
-    border: 1px solid red;
-    box-shadow: 0 0 4px white, 0 0 6px white, 0 0 10px red, 0 0 2px blue;
+    margin: 0px;
+    padding: 0px;
+    border-radius: 0px;
+    border: none;
+    background-color: transparent;
 }
 
+/* Active workspace container */
 workspace-window-box-active {
-    margin: 0px 8px 0px 2px;
-    border: 1px solid cyan;
-    box-shadow: 0 0 4px white, 0 0 6px white, 0 0 6px red, 0 0 10px blue;
+    margin: 0px;
+    padding: 0px;
+    border-radius: 0px;
+    border: none;
+    background-color: rgba(37,99,235,0.06);
 }
 
-workspace-window-box { 
-    border: 1px solid white; 
-    margin: 0px 4px;
-} 
-
+/* Normal workspace container */
+workspace-window-box {
+    margin: 0px;
+    padding: 0px;
+    border-radius: 0px;
+    border: none;
+    background-color: transparent;
+}
 
 ";
-
-
