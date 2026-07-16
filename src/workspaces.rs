@@ -1,5 +1,5 @@
 use std::{
-    io::{Write,Read,BufRead,BufReader},
+    io::{self, Write, Read, BufRead, BufReader},
     env,
     os::unix::net::UnixStream,
     iter::Peekable,
@@ -7,15 +7,33 @@ use std::{
     collections::BTreeMap,
 };
 
-const EVENTS: [&str;5] = [
-            "workspace",
-            "activewindow",
-            "openwindow",
-            "closewindow",
-            "movewindow",
-];
-
 pub const WORKSPACE_COUNT: usize = 9;
+
+/* A bar-relevant Hyprland event read from socket2.
+ * socket2 lines look like `EVENT>>data`; only events that require the bar
+ * to refresh are represented here, everything else is ignored while reading.
+ */
+#[derive(Debug, Clone, Copy)]
+pub enum HyprEvent {
+    Workspace,
+    ActiveWindow,
+    OpenWindow,
+    CloseWindow,
+    MoveWindow,
+}
+
+impl HyprEvent {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "workspace" => Some(Self::Workspace),
+            "activewindow" => Some(Self::ActiveWindow),
+            "openwindow" => Some(Self::OpenWindow),
+            "closewindow" => Some(Self::CloseWindow),
+            "movewindow" => Some(Self::MoveWindow),
+            _ => None,
+        }
+    }
+}
 
 /* for this program:
  *  tag: the index of the workspace
@@ -176,34 +194,38 @@ fn assign_tags_to_win(all_wins: AllWindows) -> Workspaces {
    workspaces 
 }
 
-/* read hyprland socket2 to see if there is 
- * activity on workspace or winndow change
-*/ 
-pub fn is_activity()  -> bool {
-    let sock = get_hyprland_sock(Some("2"));
+/* Open a connection to Hyprland's socket2 event stream.
+ * The returned reader is looped over until the socket closes; the caller
+ * reconnects so events are never missed for the lifetime of the bar.
+ */
+pub fn event_socket() -> io::Result<BufReader<UnixStream>> {
+    let path = format!(
+        "{}/hypr/{}/.socket2.sock",
+        env::var("XDG_RUNTIME_DIR").unwrap(),
+        env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap(),
+    );
+    Ok(BufReader::new(UnixStream::connect(path)?))
+}
 
-    let mut buffer = String::new();
-    // for some reason reading socket2 must be buffered
-    let mut reader = BufReader::new(sock);
+/* Block until the next bar-relevant event arrives on socket2.
+ * Returns None if the socket closes (EOF) or errors, ending the read loop.
+ * The line buffer is cleared each read so it can't accumulate.
+ */
+pub fn next_event(reader: &mut BufReader<UnixStream>) -> Option<HyprEvent> {
+    let mut line = String::new();
     loop {
-        match reader.read_line(&mut buffer) {
-            Ok(_) =>{
-                for line in buffer.lines() {
-                    
-                    let event = line 
-                        .split(">>")
-                        .next()
-                        .unwrap();
-
-                    if EVENTS.contains(&event) {
-                        return true
-                    }
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => return None,
+            Ok(_) => {
+                let name = line.split(">>").next().unwrap_or("");
+                if let Some(event) = HyprEvent::parse(name) {
+                    return Some(event);
                 }
-            },
-            Err(_) => {}
+            }
+            Err(_) => return None,
         }
     }
-
 }
 
 pub fn switch_window(adr: &String) {

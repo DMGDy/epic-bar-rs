@@ -17,9 +17,8 @@
 use std::{
     thread,
     time::Duration,
-    sync::mpsc,
     rc::Rc,
-    cell::Cell,
+    cell::{Cell, RefCell},
     path::Path,
     fs,
     io,
@@ -41,7 +40,6 @@ use gtk::{
     gdk::Display,
     glib::{
         ControlFlow,
-        clone,
     },
     glib
 };
@@ -57,23 +55,68 @@ mod status;
 mod css;
 
 use crate::status::Cpu;
+use crate::workspaces::{Workspace, Workspaces};
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 // This cannot keep going
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
-    app.connect_activate(top_bar);
-    app.connect_activate(bottom_bar);
+    app.connect_activate(build_ui);
     app.run()
 }
 
-fn top_bar(app: &Application) {
-
-    // default css props
-    let css_prov = CssProvider::new(); 
+/* Build both bars, share a single Workspaces snapshot between them, and run
+ * one persistent socket2 watcher that refreshes that snapshot and repaints
+ * both bars whenever Hyprland reports workspace/window activity.
+ */
+fn build_ui(app: &Application) {
+    let css_prov = CssProvider::new();
     css_prov.load_from_string(css::CSS);
-
     init_style(&css_prov);
+
+    // single source of truth shared by both bars (main thread only, hence Rc/RefCell)
+    let state: Rc<RefCell<Workspaces>> = Rc::new(RefCell::new(workspaces::get_workspaces()));
+
+    let workspace_container = top_bar(app, &state.borrow());
+    let windows_container = bottom_bar(app, &state.borrow());
+
+    let (tx, rx) = async_channel::unbounded::<workspaces::HyprEvent>();
+
+    // one persistent connection to socket2 shared by both bars; typed events only.
+    // reconnect on close/error (e.g. Hyprland restart) so updates never stop.
+    thread::spawn(move || loop {
+        match workspaces::event_socket() {
+            Ok(mut reader) => {
+                while let Some(event) = workspaces::next_event(&mut reader) {
+                    if tx.send_blocking(event).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+        thread::sleep(Duration::from_millis(500));
+    });
+
+    // single main-thread consumer: coalesce bursts, refresh once, repaint both bars
+    glib::spawn_future_local(async move {
+        while let Ok(_event) = rx.recv().await {
+            // coalesce a burst into a single refresh (bounded so it can't spin)
+            for _ in 0..64 {
+                if rx.try_recv().is_err() {
+                    break;
+                }
+            }
+            let new_state = workspaces::get_workspaces();
+            *state.borrow_mut() = new_state;
+            let ws = state.borrow();
+            populate_workspace_box(&workspace_container, &ws);
+            populate_windows_container(&windows_container, &ws);
+        }
+    });
+}
+
+fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -228,7 +271,7 @@ fn top_bar(app: &Application) {
         workspace_container.append(&workspace_button);
     };
 
-    populate_workspace_box(&workspace_container);
+    populate_workspace_box(&workspace_container, ws);
 
     main_container.append(&workspace_container);
     main_container.append(&spacer);
@@ -254,19 +297,6 @@ fn top_bar(app: &Application) {
     window.set_decorated(true);
     window.present();
 
-    let (tx,rx) = mpsc::channel();
-
-    let workspace_clone = workspace_container.clone();
-    // check if workspace activity in different thread to avoid blocking
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(50));
-            if workspaces::is_activity() {
-                tx.send(()).unwrap();
-            }
-        }
-    });
-    
     let has = has.clone();
     let battery_image = battery_image.clone();
     let battery_label = battery_label.clone();
@@ -275,18 +305,6 @@ fn top_bar(app: &Application) {
     let cpu_label = cpu_label.clone();
     let cpu_load_label = cpu_load_label.clone();
     let cpu_image = cpu_image.clone();
-
-    // on main thread check if signal recieved that there is to update 
-
-    glib::source::timeout_add_local(Duration::from_millis(50),move || {
-
-
-        if let Ok(_) = rx.try_recv() {
-            populate_workspace_box(&workspace_clone);
-        }
-
-        ControlFlow::Continue
-    });
 
     // persisting data to track cpu load over time
     let cpu = status::Cpu::new();
@@ -319,6 +337,8 @@ fn top_bar(app: &Application) {
         
         ControlFlow::Continue
     });
+
+    workspace_container
 }
 
 fn init_style(provider: &impl IsA<StyleProvider>) {
@@ -329,8 +349,7 @@ fn init_style(provider: &impl IsA<StyleProvider>) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
-fn populate_workspace_box(workspace_container: &Box){
-    let workspaces = workspaces::get_workspaces();
+fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces){
     let mut ws_opt = workspace_container.first_child();
 
     while let Some(ref workspace) = ws_opt {
@@ -360,13 +379,7 @@ fn populate_workspace_box(workspace_container: &Box){
     }
 }
 
-fn bottom_bar(app: &Application) {
-    
-    let css_prov = CssProvider::new(); 
-    css_prov.load_from_string(css::CSS);
-
-    init_style(&css_prov);
-
+fn bottom_bar(app: &Application, ws: &Workspaces) -> Box {
 
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -423,38 +436,15 @@ fn bottom_bar(app: &Application) {
 
     window.set_decorated(true);
     window.present();
-    let (tx,rx) = mpsc::channel();
 
-    // check if workspace activity in different thread to avoid blocking
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(25));
-            if workspaces::is_activity() {
-                tx.send(()).unwrap();
-            }
-        }
-    });
+    // initial paint from the shared snapshot; further updates come from build_ui's watcher
+    populate_windows_container(&workspace_windows_container, ws);
 
-
-
-    glib::source::idle_add_local(move || {
-        thread::sleep(Duration::from_millis(25));
-
-         if let Ok(_) = rx.try_recv() {
-            populate_windows_container(&workspace_windows_container);
-        }
-
-        ControlFlow::Continue
-    });
-
+    workspace_windows_container
 }
 
-fn populate_windows_container(container: &Box) {
-    let workspaces = workspaces::get_workspaces();
-
-    let sorted: &mut Vec<_> = &mut workspaces
-        .into_iter()
-        .collect();
+fn populate_windows_container(container: &Box, workspaces: &Workspaces) {
+    let mut sorted: Vec<(&usize, &Workspace)> = workspaces.iter().collect();
 
     // sort by recently used
     sorted.sort_by(|w1,w2| w1.1.order.cmp(&w2.1.order));
