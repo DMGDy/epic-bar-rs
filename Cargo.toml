@@ -9,3 +9,5 @@ gtk4-layer-shell = "0.4.0"
 librsvg = "2.59.2"
 time = { version = "0.3.37", features = ["formatting", "local-offset"] }
 async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "=1.0.143"

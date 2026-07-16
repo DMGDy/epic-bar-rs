@@ -2,10 +2,10 @@ use std::{
     io::{self, Write, Read, BufRead, BufReader},
     env,
     os::unix::net::UnixStream,
-    iter::Peekable,
-    str::SplitWhitespace,
     collections::BTreeMap,
 };
+
+use serde::Deserialize;
 
 pub const WORKSPACE_COUNT: usize = 9;
 
@@ -81,95 +81,88 @@ fn get_hyprland_sock(num: Option<&str>) -> UnixStream {
         )).unwrap()
 }
 
-fn peek_until_newline<'a>(iter: &mut Peekable<SplitWhitespace<'a>>,next_line: &str) -> String {
-    let mut result = Vec::new();
-    while let Some(&word) = iter.peek() {
-        if word.contains(next_line) {
-            let parts: Vec<&str> = word.split(next_line).collect();
-            result.push(parts[0]); 
-            break;
-        }
-        result.push(word);
-        iter.next();
-    }
-    result.join(" ")
+/* Minimal typed views over Hyprland's JSON IPC replies (the `j/` command
+ * variants, e.g. `j/clients`). Only the fields the bar uses are declared;
+ * serde ignores the rest. This replaces the whitespace tokenizer, which
+ * could be corrupted by titles that happened to contain field-name markers.
+ */
+#[derive(Deserialize)]
+struct JsonClient {
+    address: String,
+    title: String,
+    class: String,
+    #[serde(rename = "initialTitle")]
+    initial_title: String,
+    #[serde(rename = "focusHistoryID")]
+    focus_history_id: usize,
+    workspace: JsonWorkspaceRef,
+}
+
+#[derive(Deserialize)]
+struct JsonWorkspaceRef {
+    id: i64,
+}
+
+#[derive(Deserialize)]
+struct JsonActiveWorkspace {
+    id: i64,
 }
 
 fn get_windows() -> Vec<Window>{
     let mut sock = get_hyprland_sock(None);
 
-    let _ = sock.write_all(b"clients");
+    // `j/clients` returns a JSON array of every open window
+    let _ = sock.write_all(b"j/clients");
 
     let mut buff = String::new();
     sock.read_to_string(&mut buff).unwrap();
 
+    let clients: Vec<JsonClient> = serde_json::from_str(&buff).unwrap_or_default();
 
-    let mut iter = buff.split_whitespace().peekable();
+    let mut all_windows: Vec<Window> = Vec::new();
 
-    let mut done = false;
-    let mut all_windows: Vec<Window>  = Vec::new();
-    let mut name = String::with_capacity(32);
-    let mut info = String::with_capacity(64);
-    let mut class = String::with_capacity(32);
-    let mut address = String::with_capacity(8);
-    let mut tag = usize::default();
-    let mut order = usize::default();
-
-    while let Some(key) = iter.next() {
-        match key {
-            "workspace:" => {
-                tag = iter.peek().unwrap().parse().unwrap();
-            },
-            "title:" => {
-                info = peek_until_newline(&mut iter,"initialClass:").trim_end().to_string();
-                info = match info {
-                    init_class if init_class.contains(".pdf") =>
-                        init_class.split("/").last().expect("PDF Document").to_string(),
-                    _ => info
-                }
-            },
-            "initialTitle:" => {
-                name = peek_until_newline(&mut iter,"pid:").trim_end().to_string();
-                // special cases for ugly initialTitles
-                name = match name {
-                    title if title.contains("Chromium") =>  "Chromium".to_string(),
-                    title if title.contains("OBS") =>  "OBS Studio".to_string(),
-                    title if title.contains(".pdf") => 
-                        title.split("/").last().expect("Document").to_string(),
-                    title if title.contains("WhatsApp") => "WhatsApp".to_string(),
-                    
-                    _ => name 
-                        
-                }
-            }
-            "focusHistoryID:" => {
-                order = iter.peek().unwrap().parse().unwrap();
-                done = true;
-            },
-            
-            "Window" => {
-                address = iter.peek().unwrap().to_string();
-            },
-
-            "class:" => {
-                class = peek_until_newline(&mut iter, "title:").trim_end().to_string();
-            },
-
-            _ => {}
+    for client in clients {
+        // the bar models workspaces as positive usize tags; skip special
+        // (negative id) workspaces the old usize parser could not represent
+        let tag = match usize::try_from(client.workspace.id) {
+            Ok(tag) => tag,
+            Err(_) => continue,
         };
 
-        if done == true{
-            all_windows.push( Window{
-                 name: name.clone(),
-                 info: info.clone(),
-                 address: address.clone(),
-                 class: class.clone(),
-                 tag,
-                 order
-            });
-            done = false;
+        // info = current title, keeping the pdf-basename special case
+        let info = match client.title {
+            title if title.contains(".pdf") =>
+                title.split("/").last().unwrap_or(&title).to_string(),
+            title => title,
         };
+
+        // name = initial title, keeping the same app-name clean-ups
+        let name = match client.initial_title {
+            title if title.contains("Chromium") => "Chromium".to_string(),
+            title if title.contains("OBS") => "OBS Studio".to_string(),
+            title if title.contains(".pdf") =>
+                title.split("/").last().unwrap_or(&title).to_string(),
+            title if title.contains("WhatsApp") => "WhatsApp".to_string(),
+            title => title,
+        };
+
+        // JSON addresses carry a 0x prefix; strip it so switch_window
+        // (which re-adds 0x) keeps working unchanged
+        let address = client.address
+            .strip_prefix("0x")
+            .unwrap_or(&client.address)
+            .to_string();
+
+        all_windows.push(Window {
+            name,
+            info,
+            address,
+            class: client.class,
+            tag,
+            order: client.focus_history_id,
+        });
     }
+
     all_windows.sort_by(|win1,win2| win1.order.cmp(&win2.order));
     all_windows
 }
@@ -251,36 +244,29 @@ pub fn switch_workspace(tag: usize) {
 fn check_empty_active_workspace(workspaces: &mut Workspaces) {
     let mut sock = get_hyprland_sock(None);
 
-    let _ = sock.write_all(b"activeworkspace");
+    // `j/activeworkspace` returns a JSON object for the focused workspace
+    let _ = sock.write_all(b"j/activeworkspace");
 
     let mut buff = String::new();
     sock.read_to_string(&mut buff).unwrap();
 
+    let active: JsonActiveWorkspace = match serde_json::from_str(&buff) {
+        Ok(active) => active,
+        Err(_) => return,
+    };
 
-    let mut iter = buff.split_whitespace().peekable();
-
-    let mut tag  = usize::default();
-
-    while let Some(key) = iter.next() {
-        match key {
-            "ID" => {
-                tag = iter.peek().unwrap().parse().unwrap();
-            },
-
-            _ => {}
-        };
-    }
+    let tag = match usize::try_from(active.id) {
+        Ok(tag) => tag,
+        Err(_) => return,
+    };
 
     workspaces.entry(tag)
-        .or_insert( (|| { 
-            let w = Workspace {
-                windows: Vec::new(),
-                active:  true,
-                tag,
-                order: 0,
-            };
-            w
-        })());
+        .or_insert_with(|| Workspace {
+            windows: Vec::new(),
+            active: true,
+            tag,
+            order: 0,
+        });
 
     for (_,workspace) in workspaces {
         if workspace.tag != tag {
@@ -288,8 +274,6 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) {
             workspace.active = false;
         }
     }
-
-
 }
 
 pub fn get_workspaces() -> Workspaces {
