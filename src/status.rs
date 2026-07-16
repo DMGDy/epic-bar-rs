@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::Read,
+    path::Path,
     thread,
     fmt,
 };
@@ -18,7 +19,6 @@ const MEMORY_INFO: &str = "/proc/meminfo";
 
 const CPU_STAT: &str = "/proc/stat";
 // ex. path: /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
-const CPU_COUNT: usize = 16;
 const CPU_FREQ_PREF: &str = "/sys/devices/system/cpu/cpu"; //followed by cpu number
 const CPU_FREQ_POST: &str = "/cpufreq/scaling_cur_freq";
 
@@ -73,52 +73,71 @@ pub struct Cpu {
 pub mod Network {
 }
 
+// read a sysfs/procfs file and return its trimmed contents, or None on any error
+fn read_trimmed(path: &str) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let mut buff = String::new();
+    file.read_to_string(&mut buff).ok()?;
+    Some(buff.trim_end().to_string())
+}
+
+/* Enumerate the scaling_cur_freq path of every online CPU core.
+ * The core count is detected at runtime instead of hardcoded, so machines
+ * with any number of cores work and a missing core never causes a panic.
+ */
+fn cpu_freq_paths() -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut n = 0;
+    loop {
+        let path = format!("{CPU_FREQ_PREF}{n}{CPU_FREQ_POST}");
+        if Path::new(&path).exists() {
+            paths.push(path);
+            n += 1;
+        } else {
+            break;
+        }
+    }
+    paths
+}
+
+// read the aggregate cpu line of /proc/stat -> (total_time, non_idle_time)
+fn read_cpu_totals() -> Option<(u32, u32)> {
+    let mut file = File::open(CPU_STAT).ok()?;
+    // just need first line of aggregate CPU usage measurements
+    let mut buff = [0; 64];
+    file.read_exact(&mut buff).ok()?;
+
+    let binding = String::from_utf8_lossy(&buff);
+    let line = binding.lines().next()?;
+    let cpu_totals = line.split_whitespace();
+
+    let mut count = 0;
+    let mut total_t = 0u32;
+    let mut idle_t = 0u32;
+    // cpu user nice system idle iowait irq softirq ...
+    //  0   1    2     3     4     5     6     7
+    // idle fields (4,5) are summed separately
+    for field in cpu_totals {
+        match count {
+            0 => { count += 1; continue; }
+            4 | 5 => {
+                count += 1;
+                idle_t += field.parse::<u32>().unwrap_or(0);
+                continue;
+            }
+            8 => break,
+            _ => { count += 1; }
+        }
+        total_t += field.parse::<u32>().unwrap_or(0);
+    }
+    Some((total_t + idle_t, total_t))
+}
+
 impl Cpu {
 
     pub fn new() -> Self {
-        let mut file = File::open(CPU_STAT).expect("Error opening /proc/stat");
-        // just need first line of aggregate CPU usage measurements
-        let mut buff = [0;64]; 
-
-        file.read_exact(&mut buff).unwrap();
-
-        let binding =  String::from_utf8_lossy(&buff);
-        let string = binding.lines().nth(0).unwrap().to_string();
-
-        let cpu_totals = string.split_whitespace();
-
-        let mut count = 0;
-        let mut total_t = 0;
-        let mut idle_t = u32::default();
-        // cpu user nice system idle iowait irq softirq ... ... ... 
-        //      ^    ^     ^     *     ^     ^     ^                
-        //  0   1    2     3     4     5     6     7                
-        // add idle seperately
-        for field in cpu_totals {
-            match count {
-                0 => {
-                    count += 1;
-                    continue;
-                },
-                4|5 => {
-                    count += 1;
-                    idle_t += field.parse::<u32>().unwrap_or(0);
-                    continue;
-                },
-                8 => break,
-                _ => {
-                    count += 1;
-                }
-            }
-
-            total_t += field.parse::<u32>().unwrap_or(0);
-        }
-         // sum non-idle times
-        // total time with idle time
-        // delta between total time AND Non-idle times
-        // ((total_time - non_idle_time) / total_time) * 100 = avg load
-        let total_load = total_t + idle_t;
-        let non_idle_load = total_t;
+        // fall back to zeros if /proc/stat can't be read; avg starts at 0 anyway
+        let (total_load, non_idle_load) = read_cpu_totals().unwrap_or((0, 0));
 
         Cpu {
             total_load1: total_load,
@@ -130,93 +149,62 @@ impl Cpu {
     }
 
     pub fn get_avg_freq() -> String {
-        // get all paths for CPUs
-        let cpu_freq_paths: Vec<String> = (0..CPU_COUNT)
-            .map(|n| format!("{CPU_FREQ_PREF}{n}{CPU_FREQ_POST}"))
-            .collect();
-
         let mut handles = Vec::new();
 
-        // each handle should be the frequency in Hz
-        for path in cpu_freq_paths {
-            let handle = thread::spawn(move || {
-                let mut file = File::open(path).unwrap();
+        // each handle reads one core's current frequency in Hz (None on failure)
+        for path in cpu_freq_paths() {
+            let handle = thread::spawn(move || -> Option<f32> {
+                let mut file = File::open(&path).ok()?;
                 let mut buff = String::new();
-
-                let _ = file.read_to_string(&mut buff);
-
-                buff.trim_end().parse::<f32>().unwrap()
+                file.read_to_string(&mut buff).ok()?;
+                buff.trim_end().parse::<f32>().ok()
             });
             handles.push(handle);
         }
-        
-        let mut total = 0.0f32;
-        for handle in handles {
-            total += handle.join().expect("Thread panicked");
+
+        // average only over cores read successfully; divisor is the live count
+        let freqs: Vec<f32> = handles
+            .into_iter()
+            .filter_map(|h| h.join().ok().flatten())
+            .collect();
+
+        if freqs.is_empty() {
+            return "N/A".to_string();
         }
-    
-        let freq_sum = total/(CPU_COUNT as f32 * 1_000_000.0);
-            if freq_sum < 1.0 {
-                format!("{:.0} MHz",freq_sum*1000.0).to_string()
-            } else {
-                format!("{:.1} GHz",freq_sum).to_string()
-            }
+
+        let total: f32 = freqs.iter().sum();
+        let freq_avg = total / (freqs.len() as f32 * 1_000_000.0);
+        if freq_avg < 1.0 {
+            format!("{:.0} MHz", freq_avg * 1000.0)
+        } else {
+            format!("{:.1} GHz", freq_avg)
+        }
     }
 
     pub fn get_cpu_load(&mut self) -> f32{
-        let mut file = File::open(CPU_STAT).expect("Error opening /proc/stat");
-        // just need first line of aggregate CPU usage measurements
-        let mut buff = [0;64]; 
+        // keep the last known load if /proc/stat can't be read this tick
+        let (total_load, non_idle_load) = match read_cpu_totals() {
+            Some(v) => v,
+            None => return self.avg_load,
+        };
 
-        file.read_exact(&mut buff).unwrap();
-
-        let binding =  String::from_utf8_lossy(&buff);
-        let string = binding.lines().nth(0).unwrap().to_string();
-
-        let cpu_totals = string.split_whitespace();
-
-        let mut count = 0;
-        let mut total_t = 0;
-        let mut idle_t = u32::default();
-        // cpu user nice system idle iowait irq softirq ... ... ... 
-        //      ^    ^     ^     *     *     ^     ^                
-        //  0   1    2     3     4     5     6     7                
-        // add idle seperately
-        for field in cpu_totals {
-            match count {
-                0 => {
-                    count += 1;
-                    continue;
-                },
-                4|5 => {
-                    count += 1;
-                    idle_t += field.parse::<u32>().unwrap_or(0);
-                    continue;
-                },
-                8 => break,
-                _ => {
-                    count += 1;
-                }
-            }
-
-            total_t += field.parse::<u32>().unwrap_or(0);
-        }
-    
-        // sum non-idle times
-        // total time with idle time
-        // delta between total time AND Non-idle times
+        // delta between total time AND non-idle times
         // ((total_time - non_idle_time) / total_time) * 100 = avg load
-
         self.total_load2 = self.total_load1;
         self.non_idle_load2 = self.non_idle_load1;
 
-        self.total_load1 = total_t + idle_t;
-        self.non_idle_load1 = total_t;
+        self.total_load1 = total_load;
+        self.non_idle_load1 = non_idle_load;
 
-        let delta_total = self.total_load1 - self.total_load2;
-        let delta_non_idle = self.non_idle_load1 - self.non_idle_load2;
+        let delta_total = self.total_load1.saturating_sub(self.total_load2);
+        let delta_non_idle = self.non_idle_load1.saturating_sub(self.non_idle_load2);
 
-        self.avg_load = (delta_non_idle as f32/delta_total as f32)*100.0;
+        // identical samples would divide by zero; keep the last value instead
+        if delta_total == 0 {
+            return self.avg_load;
+        }
+
+        self.avg_load = (delta_non_idle as f32 / delta_total as f32) * 100.0;
         self.avg_load
     }
 
@@ -234,27 +222,20 @@ impl Cpu {
 }
 
 fn get_battery(b: &mut Battery) {
-    let mut file = File::open(BATTERY_PERCENTAGE).unwrap();
-    let mut buff = String::with_capacity(3);
-
-    let _ = file.read_to_string(&mut buff);
-
-    b.capacity = buff.trim_end().parse::<u32>().unwrap();
+    if let Some(cap) = read_trimmed(BATTERY_PERCENTAGE)
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        b.capacity = cap;
+    }
 }
 
 fn get_status(b: &mut Battery) {
-    let mut file = File::open(BATTERY_STATUS).unwrap();
-    let mut buff  = String::with_capacity(16);
-
-    let _ = file.read_to_string(&mut buff);
-
-    b.status = match buff.trim_end() {
-        "Charging" => BatteryStatus::Charging,
-        "Discharging" => BatteryStatus::Discharging,
-        "Not charging"=> BatteryStatus::NotCharging,
+    b.status = match read_trimmed(BATTERY_STATUS).as_deref() {
+        Some("Charging") => BatteryStatus::Charging,
+        Some("Discharging") => BatteryStatus::Discharging,
+        Some("Not charging") => BatteryStatus::NotCharging,
         _ => BatteryStatus::Error
     };
-        
 }
 
 fn get_battery_tooltip_text(b: &mut Battery) {
@@ -273,28 +254,40 @@ fn get_remaining(b: &mut Battery) {
     // read current charge
     match &b.status {
         state @ (BatteryStatus::Charging | BatteryStatus::Discharging)=> {
-            let mut file = File::open(BATTERY_CHARGE).unwrap();
-            let mut buff = String::with_capacity(32);
-            let _ = file.read_to_string(&mut buff);
-            let charge_now = buff.trim_end().parse::<f64>().unwrap();
-
-            buff.clear();
+            let charge_now = match read_trimmed(BATTERY_CHARGE)
+                .and_then(|s| s.parse::<f64>().ok())
+            {
+                Some(c) => c,
+                None => {
+                    b.remaining = "Unknown time remaining".to_string();
+                    return;
+                }
+            };
 
             // get current_now
-            let mut file2 = File::open(BATTERY_CURRENT).unwrap();
-            let _ = file2.read_to_string(&mut buff);
-            let current = buff.trim_end().parse::<f64>().unwrap_or(0.0f64);
+            let current = read_trimmed(BATTERY_CURRENT)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0f64);
+
+            // a zero draw would divide by zero; report indeterminate instead
+            if current == 0.0 {
+                b.remaining = "Calculating time remaining".to_string();
+                return;
+            }
 
             match state {
                 BatteryStatus::Charging =>{
-                    buff.clear();
                     // get full charge of battery to find remaining charge
-                    let _ = File::open(BATTERY_CHARGE_FULL)
-                        .unwrap()
-                        .read_to_string(&mut buff);
-                    let charge_remaining = buff.trim_end()
-                        .parse::<f64>()
-                        .unwrap() - charge_now;
+                    let charge_full = match read_trimmed(BATTERY_CHARGE_FULL)
+                        .and_then(|s| s.parse::<f64>().ok())
+                    {
+                        Some(f) => f,
+                        None => {
+                            b.remaining = "Unknown time to full".to_string();
+                            return;
+                        }
+                    };
+                    let charge_remaining = charge_full - charge_now;
                     let t = (charge_remaining*3600f64)/current;
                     let t_h = t/3600f64;
                     let t_m = (t%3600f64)/60f64;
@@ -410,7 +403,9 @@ fn get_time(dt: &OffsetDateTime) -> String {
 }
 
 pub fn get_datetime() -> DateTime {
-    let dt = OffsetDateTime::now_local().unwrap();
+    // fall back to UTC if the local offset can't be determined
+    let dt = OffsetDateTime::now_local()
+        .unwrap_or_else(|_| OffsetDateTime::now_utc());
     DateTime{
         date: get_date(&dt),
         time: get_time(&dt)
@@ -425,31 +420,31 @@ impl fmt::Display for DateTime {
 }
 
 pub fn get_mem_info() -> Memory {
-    let mut file = File::open(MEMORY_INFO).unwrap();
+    Memory {
+        string: read_mem_info().unwrap_or_else(|| "N/A".to_string())
+    }
+}
+
+fn read_mem_info() -> Option<String> {
+    let mut file = File::open(MEMORY_INFO).ok()?;
     let mut buff = [0;96]; // no need to read entire file
-    file.read_exact(&mut buff).unwrap();
+    file.read_exact(&mut buff).ok()?;
 
     let binding =  String::from_utf8_lossy(&buff);
-    let mut string = binding.lines();
+    let mut lines = binding.lines();
 
-    let memtotal_kb: f64 = string.nth(0).unwrap()
-        .to_string()
+    let memtotal_kb: f64 = lines.next()?
         .split_whitespace()
-        .nth(1).unwrap()
-        .parse().unwrap();
+        .nth(1)?
+        .parse().ok()?;
 
-    let memused_kb: f64 = string.nth(1).unwrap()
-        .to_string()
+    let memused_kb: f64 = lines.nth(1)?
         .split_whitespace()
-        .nth(1).unwrap()
-        .parse().unwrap();
+        .nth(1)?
+        .parse().ok()?;
 
     let total = memtotal_kb / 1_048_576.0;
     let used = (memtotal_kb - memused_kb)/1_048_576.0;
 
-    let string = format!("{:.1}/{:.1} GiB",used,total).to_string();
-
-    Memory {
-        string
-    }
+    Some(format!("{:.1}/{:.1} GiB",used,total))
 }
