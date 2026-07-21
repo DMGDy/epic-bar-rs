@@ -250,7 +250,30 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     status_container.append(&mem_container);
     status_container.append(&battery_container);
 
-    let toggle = Rc::new(Cell::new(false));
+    // status text starts visible; the reveal button hides/shows all of it
+    let status_visible = Rc::new(Cell::new(true));
+
+    status_reveal_button.connect_clicked(glib::clone!(
+        #[weak]
+        status_reveal_button,
+        #[strong]
+        cpu_load_label,
+        #[strong]
+        cpu_label,
+        #[strong]
+        mem_label,
+        #[strong]
+        battery_label,
+        move |_| {
+            let visible = !status_visible.get();
+            status_visible.set(visible);
+            status_reveal_button.set_label(if visible { "󰁚" } else { "󰁋" });
+            cpu_load_label.set_visible(visible);
+            cpu_label.set_visible(visible);
+            mem_label.set_visible(visible);
+            battery_label.set_visible(visible);
+        }
+    ));
 
     // init the container
     for n in 1..workspaces::WORKSPACE_COUNT+1 {
