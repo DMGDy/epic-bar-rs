@@ -219,6 +219,24 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
         .css_name("cpu-load-label")
         .build();
 
+    let net_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .hexpand(true)
+        .build();
+
+    let net_icon = Image::builder()
+        .file("assets/status/network-wired.svg")
+        .css_name("net-icon")
+        .pixel_size(20)
+        .build();
+
+    let net_label = Button::builder()
+        .label("…")
+        .hexpand(false)
+        .visible(true)
+        .css_name("net-label")
+        .build();
+
     let date_container = Button::builder()
         .css_name("date-container")
         .build();
@@ -237,6 +255,9 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     mem_container.append(&mem_icon);
     mem_container.append(&mem_label);
 
+    net_container.append(&net_icon);
+    net_container.append(&net_label);
+
     if has {
         battery_icon.set_child(Some(&battery_image));
         battery_container.append(&battery_icon);
@@ -246,6 +267,7 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     date_container.set_child(Some(&date_label));
 
     status_container.append(&status_reveal_button);
+    status_container.append(&net_container);
     status_container.append(&cpu_container);
     status_container.append(&mem_container);
     status_container.append(&battery_container);
@@ -264,6 +286,8 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
         mem_label,
         #[strong]
         battery_label,
+        #[strong]
+        net_label,
         move |_| {
             let visible = !status_visible.get();
             status_visible.set(visible);
@@ -272,6 +296,7 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
             cpu_label.set_visible(visible);
             mem_label.set_visible(visible);
             battery_label.set_visible(visible);
+            net_label.set_visible(visible);
         }
     ));
 
@@ -328,6 +353,8 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     let cpu_label = cpu_label.clone();
     let cpu_load_label = cpu_load_label.clone();
     let cpu_image = cpu_image.clone();
+    let net_icon = net_icon.clone();
+    let net_label = net_label.clone();
 
     // persisting data to track cpu load over time
     let cpu = status::Cpu::new();
@@ -351,6 +378,11 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
         let memory = status::get_mem_info();
 
         mem_label.set_label(&memory.string);
+
+        let net = status::get_network_info();
+        net_label.set_label(&net.label());
+        net_icon.set_from_file(Some(std::path::Path::new(&net.icon)));
+        net_icon.set_tooltip_text(Some(&net.tooltip()));
 
         cpu_label.set_label(&Cpu::get_avg_freq());
         let cpu_load = cpu.get_cpu_load();

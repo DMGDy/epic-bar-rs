@@ -4,6 +4,9 @@ use std::{
     path::Path,
     thread,
     fmt,
+    process::Command,
+    cell::RefCell,
+    time::Instant,
 };
 
 use time::{OffsetDateTime,format_description};
@@ -21,6 +24,12 @@ const CPU_STAT: &str = "/proc/stat";
 // ex. path: /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
 const CPU_FREQ_PREF: &str = "/sys/devices/system/cpu/cpu"; //followed by cpu number
 const CPU_FREQ_POST: &str = "/cpufreq/scaling_cur_freq";
+
+const NET_CLASS: &str = "/sys/class/net";
+const NET_ROUTE: &str = "/proc/net/route";
+const NET_ICON_WIRED: &str = "assets/status/network-wired.svg";
+const NET_ICON_WIRELESS: &str = "assets/status/network-wireless.svg";
+const NET_ICON_OFFLINE: &str = "assets/status/network-offline.svg";
 
 pub struct DateTime {
     pub date: String,
@@ -70,7 +79,154 @@ pub struct Cpu {
     pub avg_load:f32
 }
 
-pub mod Network {
+pub enum NetKind {
+    Wired,
+    Wireless,
+    Offline,
+}
+
+pub struct Network {
+    pub iface: String,
+    pub kind: NetKind,
+    pub ssid: Option<String>,
+    pub icon: String,
+}
+
+impl Default for Network {
+    fn default() -> Self {
+        Network {
+            iface: String::new(),
+            kind: NetKind::Offline,
+            ssid: None,
+            icon: NET_ICON_OFFLINE.to_string(),
+        }
+    }
+}
+
+impl Network {
+    // concise text for the bar: SSID on wifi (falling back to the interface
+    // name), the interface name when wired, or a plain offline marker
+    pub fn label(&self) -> String {
+        match self.kind {
+            NetKind::Wireless => self.ssid.clone().unwrap_or_else(|| self.iface.clone()),
+            NetKind::Wired => self.iface.clone(),
+            NetKind::Offline => "Offline".to_string(),
+        }
+    }
+
+    // verbose text for the icon tooltip: always names the device in use
+    pub fn tooltip(&self) -> String {
+        match self.kind {
+            NetKind::Wireless => match &self.ssid {
+                Some(ssid) => format!("{} · {}", self.iface, ssid),
+                None => format!("{} · Wi-Fi", self.iface),
+            },
+            NetKind::Wired => format!("{} · Wired", self.iface),
+            NetKind::Offline => "Disconnected".to_string(),
+        }
+    }
+}
+
+/* The interface backing the default route (destination 00000000) with the
+ * lowest metric is the one actually carrying traffic. Reading /proc/net/route
+ * picks it out and naturally ignores docker/veth/loopback, none of which hold
+ * a default route. Returns None when there is no default route (offline).
+ */
+fn primary_iface() -> Option<String> {
+    let contents = read_trimmed(NET_ROUTE)?;
+    let mut best: Option<(u32, String)> = None;
+
+    // columns: Iface Destination Gateway Flags RefCnt Use Metric Mask ...
+    for line in contents.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 7 || fields[1] != "00000000" {
+            continue;
+        }
+        let metric = fields[6].parse::<u32>().unwrap_or(u32::MAX);
+        if best.as_ref().map_or(true, |(m, _)| metric < *m) {
+            best = Some((metric, fields[0].to_string()));
+        }
+    }
+
+    best.map(|(_, iface)| iface)
+}
+
+// a wireless interface exposes /sys/class/net/<iface>/wireless
+fn is_wireless(iface: &str) -> bool {
+    Path::new(&format!("{NET_CLASS}/{iface}/wireless")).is_dir()
+}
+
+thread_local! {
+    // (interface, last query time, cached ssid) for the wifi SSID lookup
+    static SSID_CACHE: RefCell<Option<(String, Instant, Option<String>)>> = RefCell::new(None);
+}
+
+/* SSID is not exposed through sysfs, so shell out to `iw`. Only called when
+ * the primary interface is wireless and cached below, so this normally spawns
+ * at most one short-lived process every ten seconds.
+ */
+fn fetch_ssid(iface: &str) -> Option<String> {
+    let output = Command::new("iw")
+        .args(["dev", iface, "link"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if let Some(ssid) = line.trim().strip_prefix("SSID:") {
+            let ssid = ssid.trim();
+            if !ssid.is_empty() {
+                return Some(ssid.to_string());
+            }
+        }
+    }
+    None
+}
+
+// re-run `iw` only when the interface changes or the cache is older than 10s
+fn cached_ssid(iface: &str) -> Option<String> {
+    SSID_CACHE.with(|cache| {
+        let mut slot = cache.borrow_mut();
+        let stale = match slot.as_ref() {
+            Some((cached_if, when, _)) => cached_if != iface || when.elapsed().as_secs() >= 10,
+            None => true,
+        };
+        if stale {
+            let ssid = fetch_ssid(iface);
+            *slot = Some((iface.to_string(), Instant::now(), ssid.clone()));
+            ssid
+        } else {
+            slot.as_ref().and_then(|(_, _, ssid)| ssid.clone())
+        }
+    })
+}
+
+pub fn get_network_info() -> Network {
+    let iface = match primary_iface() {
+        Some(iface) => iface,
+        None => return Network::default(), // no default route -> offline
+    };
+
+    if is_wireless(&iface) {
+        let ssid = cached_ssid(&iface);
+        Network {
+            iface,
+            kind: NetKind::Wireless,
+            ssid,
+            icon: NET_ICON_WIRELESS.to_string(),
+        }
+    } else {
+        Network {
+            iface,
+            kind: NetKind::Wired,
+            ssid: None,
+            icon: NET_ICON_WIRED.to_string(),
+        }
+    }
 }
 
 // read a sysfs/procfs file and return its trimmed contents, or None on any error

@@ -59,6 +59,19 @@ status-reveal-button {
     color: #1a1a1a;
 }
 
+/* Network styling */
+net-icon {
+    padding: 5px 5px;
+    font-size: 18px;
+    color: #1a1a1a;
+}
+
+net-label {
+    font-size: 15px;
+    padding: 5px 10px 5px 5px;
+    color: rgba(0,0,0,0.8);
+}
+
 /* Battery styling */
 battery-icon {
     padding: 5px 5px;
