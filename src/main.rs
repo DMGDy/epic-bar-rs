@@ -116,6 +116,57 @@ fn build_ui(app: &Application) {
     });
 }
 
+// deterministic fingerprint of the current interface set, used to rebuild the
+// network widgets only when something actually changes (avoids per-second churn)
+fn net_signature(nets: &[status::Network]) -> String {
+    nets.iter()
+        .map(|n| format!("{}|{}|{}", n.iface, n.icon, n.label()))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/* Rebuild the network area: one icon+label entry per online interface. The
+ * label buttons are collected so the reveal button can hide/show them, and
+ * they inherit the current visibility so a rebuild while hidden stays hidden.
+ */
+fn render_networks(
+    container: &Box,
+    labels: &RefCell<Vec<Button>>,
+    visible: bool,
+    nets: &[status::Network],
+) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
+    let mut new_labels = Vec::with_capacity(nets.len());
+    for net in nets {
+        let entry = Box::builder()
+            .orientation(Orientation::Horizontal)
+            .build();
+
+        let icon = Image::builder()
+            .css_name("net-icon")
+            .pixel_size(20)
+            .build();
+        icon.set_from_file(Some(Path::new(&net.icon)));
+        icon.set_tooltip_text(Some(&net.tooltip()));
+
+        let label = Button::builder()
+            .label(net.label())
+            .css_name("net-label")
+            .visible(visible)
+            .build();
+
+        entry.append(&icon);
+        entry.append(&label);
+        container.append(&entry);
+        new_labels.push(label);
+    }
+
+    *labels.borrow_mut() = new_labels;
+}
+
 fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
     let main_container = Box::builder()
@@ -221,21 +272,14 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
     let net_container = Box::builder()
         .orientation(Orientation::Horizontal)
+        .spacing(8)
         .hexpand(true)
         .build();
 
-    let net_icon = Image::builder()
-        .file("assets/status/network-wired.svg")
-        .css_name("net-icon")
-        .pixel_size(20)
-        .build();
-
-    let net_label = Button::builder()
-        .label("…")
-        .hexpand(false)
-        .visible(true)
-        .css_name("net-label")
-        .build();
+    // one icon+label entry per online interface; the label buttons are tracked
+    // for the reveal toggle and net_sig guards rebuilds to real changes only
+    let net_labels: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
+    let net_sig = Rc::new(RefCell::new(String::new()));
 
     let date_container = Button::builder()
         .css_name("date-container")
@@ -255,8 +299,9 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     mem_container.append(&mem_icon);
     mem_container.append(&mem_label);
 
-    net_container.append(&net_icon);
-    net_container.append(&net_label);
+    let initial_nets = status::get_networks();
+    *net_sig.borrow_mut() = net_signature(&initial_nets);
+    render_networks(&net_container, &net_labels, true, &initial_nets);
 
     if has {
         battery_icon.set_child(Some(&battery_image));
@@ -287,7 +332,9 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
         #[strong]
         battery_label,
         #[strong]
-        net_label,
+        status_visible,
+        #[strong]
+        net_labels,
         move |_| {
             let visible = !status_visible.get();
             status_visible.set(visible);
@@ -296,7 +343,9 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
             cpu_label.set_visible(visible);
             mem_label.set_visible(visible);
             battery_label.set_visible(visible);
-            net_label.set_visible(visible);
+            for label in net_labels.borrow().iter() {
+                label.set_visible(visible);
+            }
         }
     ));
 
@@ -353,8 +402,10 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     let cpu_label = cpu_label.clone();
     let cpu_load_label = cpu_load_label.clone();
     let cpu_image = cpu_image.clone();
-    let net_icon = net_icon.clone();
-    let net_label = net_label.clone();
+    let net_container = net_container.clone();
+    let net_labels = net_labels.clone();
+    let net_sig = net_sig.clone();
+    let status_visible = status_visible.clone();
 
     // persisting data to track cpu load over time
     let cpu = status::Cpu::new();
@@ -379,10 +430,12 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
         mem_label.set_label(&memory.string);
 
-        let net = status::get_network_info();
-        net_label.set_label(&net.label());
-        net_icon.set_from_file(Some(std::path::Path::new(&net.icon)));
-        net_icon.set_tooltip_text(Some(&net.tooltip()));
+        let nets = status::get_networks();
+        let sig = net_signature(&nets);
+        if *net_sig.borrow() != sig {
+            render_networks(&net_container, &net_labels, status_visible.get(), &nets);
+            *net_sig.borrow_mut() = sig;
+        }
 
         cpu_label.set_label(&Cpu::get_avg_freq());
         let cpu_load = cpu.get_cpu_load();

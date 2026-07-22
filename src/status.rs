@@ -205,12 +205,25 @@ fn cached_ssid(iface: &str) -> Option<String> {
     })
 }
 
-pub fn get_network_info() -> Network {
-    let iface = match primary_iface() {
-        Some(iface) => iface,
-        None => return Network::default(), // no default route -> offline
-    };
+// an interface backed by real hardware exposes /sys/class/net/<iface>/device,
+// which excludes loopback and virtual bridges/veths (docker, containers, ...)
+fn is_physical(iface: &str) -> bool {
+    Path::new(&format!("{NET_CLASS}/{iface}/device")).exists()
+}
 
+/* An interface is online when the link is up and a carrier is present:
+ * operstate reads "up" on a live connection and carrier reads "1" when the
+ * physical link is detected, so an unplugged NIC or a powered-off radio is
+ * skipped. Any read failing (e.g. carrier is unreadable while down) is offline.
+ */
+fn iface_online(iface: &str) -> bool {
+    let operstate = read_trimmed(&format!("{NET_CLASS}/{iface}/operstate"));
+    let carrier = read_trimmed(&format!("{NET_CLASS}/{iface}/carrier"));
+    matches!(operstate.as_deref(), Some("up")) && matches!(carrier.as_deref(), Some("1"))
+}
+
+// build the Network describing a single interface already known to be online
+fn describe(iface: String) -> Network {
     if is_wireless(&iface) {
         let ssid = cached_ssid(&iface);
         Network {
@@ -227,6 +240,34 @@ pub fn get_network_info() -> Network {
             icon: NET_ICON_WIRED.to_string(),
         }
     }
+}
+
+/* Every physical interface that is currently online, so concurrently used
+ * devices (two ethernet links, or ethernet plus wifi) are all shown. The
+ * default-route interface is listed first as the "main" connection and the
+ * rest follow alphabetically. When nothing is online a single offline entry
+ * is returned so the bar always has something to display.
+ */
+pub fn get_networks() -> Vec<Network> {
+    let mut ifaces: Vec<String> = match std::fs::read_dir(NET_CLASS) {
+        Ok(entries) => entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| is_physical(name) && iface_online(name))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    if ifaces.is_empty() {
+        return vec![Network::default()];
+    }
+
+    let primary = primary_iface();
+    ifaces.sort();
+    // stable sort keeps the alphabetical order; the primary just floats to front
+    ifaces.sort_by_key(|name| Some(name.clone()) != primary);
+
+    ifaces.into_iter().map(describe).collect()
 }
 
 // read a sysfs/procfs file and return its trimmed contents, or None on any error
