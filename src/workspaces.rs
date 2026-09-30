@@ -211,7 +211,7 @@ pub fn switch_window(adr: &String) {
     let mut sock = get_hyprland_sock(None);
     
     let _ = sock.write_all(format!(
-            "dispatch focuswindow address:0x{adr}"
+            "dispatch hl.dsp.focus({{ window = \"address:0x{adr}\" }})"
     ).as_bytes());
 
 }
@@ -221,7 +221,7 @@ pub fn switch_workspace(tag: usize) {
     let mut sock = get_hyprland_sock(None);
 
     let _ = sock.write_all(format!(
-            "dispatch workspace {tag}"
+            "dispatch hl.dsp.focus({{ workspace = {tag} }})"
     ).as_bytes());
    
 }
