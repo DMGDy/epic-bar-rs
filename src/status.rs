@@ -27,6 +27,33 @@ pub struct DateTime {
     pub time: String
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusLevel {
+    Normal,
+    Warning,
+    Critical,
+}
+
+impl StatusLevel {
+    fn usage(percent: f64, warning: f64, critical: f64) -> Self {
+        if percent >= critical {
+            Self::Critical
+        } else if percent >= warning {
+            Self::Warning
+        } else {
+            Self::Normal
+        }
+    }
+
+    pub fn cpu(percent: f32) -> Self {
+        Self::usage(f64::from(percent), 85.0, 95.0)
+    }
+
+    pub fn memory(percent: f64) -> Self {
+        Self::usage(percent, 80.0, 90.0)
+    }
+}
+
 #[derive(PartialEq)]
 enum BatteryStatus {
     Discharging,
@@ -37,7 +64,7 @@ enum BatteryStatus {
 
 pub struct Battery {
     pub capacity: u32, //percentage left on battery
-    pub icon: String, //return path to image for icon
+    pub icon: String,
     pub tooltip_text: String, // formatted with remaining
     remaining: String, 
 
@@ -56,8 +83,20 @@ impl Default for Battery {
     }
 }
 
+impl Battery {
+    pub fn level(&self) -> StatusLevel {
+        match self.status {
+            BatteryStatus::Error => StatusLevel::Warning,
+            BatteryStatus::Discharging if self.capacity <= 10 => StatusLevel::Critical,
+            BatteryStatus::Discharging if self.capacity <= 20 => StatusLevel::Warning,
+            _ => StatusLevel::Normal,
+        }
+    }
+}
+
 pub struct Memory {
-    pub string: String
+    pub string: String,
+    pub used_percent: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -220,17 +259,6 @@ impl Cpu {
         self.avg_load
     }
 
-    pub fn get_cpu_image(&self) -> String {
-        match self.avg_load {
-            l if l <= 12.5 => "assets/status/indicator-cpufreq.svg",
-            l if l > 12.5 && l <= 45.0 => "assets/status/indicator-cpufreq-25.svg",
-            l if l > 45.0 && l <= 70.0 => "assets/status/indicator-cpufreq-50.svg",
-            l if l > 70.0 && l <= 90.0 => "assets/status/indicator-cpufreq-75.svg",
-            l if l > 90.0 && l<= 100.0 => "assets/status/indicator-cpufreq-100.svg",
-            _ => "assets/status/indicator-cpufreq.svg"
-        }.to_string()
-    }
-
 }
 
 fn get_battery(b: &mut Battery) {
@@ -333,54 +361,17 @@ fn get_remaining(b: &mut Battery) {
 }
 
 fn get_icon(b: &mut Battery) {
-
-    let capacity = b.capacity;
-    let status = &b.status;
-
-    b.icon = match status {
-        BatteryStatus::Charging =>{
-
-            match capacity {
-                0..=10=> "assets/status/battery-000-charging.svg".to_string(),
-                11..=19=>"assets/status/battery-010-charging.svg".to_string(),
-                20..=29=>"assets/status/battery-020-charging.svg".to_string(),
-                30..=39=>"assets/status/battery-030-charging.svg".to_string(),
-                40..=49=>"assets/status/battery-040-charging.svg".to_string(),
-                50..=59=>"assets/status/battery-050-charging.svg".to_string(),
-                60..=69=>"assets/status/battery-060-charging.svg".to_string(),
-                70..=79=>"assets/status/battery-070-charging.svg".to_string(),
-                80..=89=>"assets/status/battery-080-charging.svg".to_string(),
-                90..=94=>"assets/status/battery-090-charging.svg".to_string(),
-                95..=100=>"assets/status/battery-100-charging.svg".to_string(),
-                _ => "assets/status/battery-missing.svg".to_string()
-            }
-        },
-
-        BatteryStatus::Discharging => {
-            match capacity {
-                0..=10=>  "assets/status/battery-000.svg".to_string(),
-                11..=19=> "assets/status/battery-010.svg".to_string(),
-                20..=29=> "assets/status/battery-020.svg".to_string(),
-                30..=39=> "assets/status/battery-030.svg".to_string(),
-                40..=49=> "assets/status/battery-040.svg".to_string(),
-                50..=59=> "assets/status/battery-050.svg".to_string(),
-                60..=69=> "assets/status/battery-060.svg".to_string(),
-                70..=79=> "assets/status/battery-070.svg".to_string(),
-                80..=89=> "assets/status/battery-080.svg".to_string(),
-                90..=94=> "assets/status/battery-090.svg".to_string(),
-                95..=100=>"assets/status/battery-100.svg".to_string(),
-                _ => "assets/status/battery-missing.svg".to_string()
-            }
-        },
-
-        BatteryStatus::NotCharging => {
-            match capacity {
-                97..=100=> "assets/status/battery-full-charging.svg".to_string(),
-                _ => "assets/status/battery-missing.svg".to_string()
-            }
-        }
-        _ => "assets/status/battery-missing.svg".to_string()
-    }
+    let level = match b.capacity {
+        0..=10 => "caution",
+        11..=30 => "low",
+        31..=80 => "good",
+        _ => "full",
+    };
+    b.icon = match b.status {
+        BatteryStatus::Error => "battery-missing-symbolic".to_string(),
+        BatteryStatus::Charging => format!("battery-{level}-charging-symbolic"),
+        _ => format!("battery-{level}-symbolic"),
+    };
 }
 
 pub fn get_battery_info() -> Battery {
@@ -450,6 +441,58 @@ pub fn get_mem_info() -> Memory {
     let string = format!("{:.1}/{:.1} GiB",used,total).to_string();
 
     Memory {
-        string
+        string,
+        used_percent: (memtotal_kb - memused_kb) / memtotal_kb * 100.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_thresholds_are_inclusive() {
+        for (percent, expected) in [
+            (0.0, StatusLevel::Normal),
+            (84.9, StatusLevel::Normal),
+            (85.0, StatusLevel::Warning),
+            (94.9, StatusLevel::Warning),
+            (95.0, StatusLevel::Critical),
+            (100.0, StatusLevel::Critical),
+        ] {
+            assert_eq!(StatusLevel::cpu(percent), expected);
+        }
+        for (percent, expected) in [
+            (79.9, StatusLevel::Normal),
+            (80.0, StatusLevel::Warning),
+            (89.9, StatusLevel::Warning),
+            (90.0, StatusLevel::Critical),
+        ] {
+            assert_eq!(StatusLevel::memory(percent), expected);
+        }
+    }
+
+    #[test]
+    fn battery_alerts_only_when_discharging_or_unknown() {
+        let mut battery = Battery::default();
+        assert_eq!(battery.level(), StatusLevel::Warning);
+        battery.status = BatteryStatus::Discharging;
+        for (capacity, expected) in [
+            (0, StatusLevel::Critical),
+            (10, StatusLevel::Critical),
+            (11, StatusLevel::Warning),
+            (20, StatusLevel::Warning),
+            (21, StatusLevel::Normal),
+        ] {
+            battery.capacity = capacity;
+            assert_eq!(battery.level(), expected);
+        }
+        battery.capacity = 5;
+        battery.status = BatteryStatus::Charging;
+        assert_eq!(battery.level(), StatusLevel::Normal);
+        get_icon(&mut battery);
+        assert_eq!(battery.icon, "battery-caution-charging-symbolic");
+        battery.status = BatteryStatus::NotCharging;
+        assert_eq!(battery.level(), StatusLevel::Normal);
     }
 }

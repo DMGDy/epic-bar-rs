@@ -7,8 +7,12 @@
 @define-color autumn_accent #8c1612;
 @define-color autumn_selection #e6bca9;
 @define-color autumn_surface #f0e4dc;
+@define-color autumn_border #d9c5b9;
+@define-color autumn_warning #703900;
+@define-color autumn_warning_background #f6e3c2;
+@define-color autumn_critical_background #f4d3c7;
 
-window, top-bar, bottom-bar {
+window, top-bar, bottom-bar, viewport {
     background-color: @autumn_background;
 }
 
@@ -16,45 +20,132 @@ button, label, box {
     color: @autumn_foreground;
 }
 
-button label, status-reveal-button, battery-icon, mem-icon,
-battery-label, mem-label, cpu-label, cpu-load-label,
-date-container, active-window-box label {
-    color: @autumn_foreground;
+top-bar, bottom-bar {
+    padding: 0 8px;
 }
 
-button:hover, .occupied:hover, date-container:hover, window-box:hover {
+top-bar {
+    border-bottom: 1px solid @autumn_border;
+}
+
+bottom-bar {
+    border-top: 1px solid @autumn_border;
+}
+
+top-bar main-box {
+    min-height: 35px;
+}
+
+bottom-bar main-box {
+    min-height: 37px;
+}
+
+.bar-button {
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 5px 10px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 4px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    font-size: 14px;
+    transition: background-color 100ms ease;
+}
+
+.bar-button:hover {
     background-color: @autumn_surface;
     color: @autumn_foreground;
 }
 
-.occupied, .occupied label, .empty-active, .empty-active label,
-tag-label, window-box, window-box label, window-box-empty {
-    color: @autumn_secondary;
-}
-
-.occupied:hover label, window-box:hover label {
-    color: @autumn_foreground;
-}
-
-.active, .empty-active, active-window-box {
-    background-color: @autumn_selection;
-    color: @autumn_foreground;
-    box-shadow: 0 0 10px alpha(@autumn_accent, 0.25);
-}
-
-.active label, .empty-active label {
+.bar-button:checked {
+    background-color: @autumn_surface;
     color: @autumn_accent;
 }
 
-.active:hover, .empty-active:hover, active-window-box:hover {
+.bar-button:focus-visible {
+    outline: 1px solid @autumn_accent;
+    outline-offset: -2px;
+}
+
+.occupied, .occupied label, window-box, window-box window-label, window-box-empty {
+    color: @autumn_secondary;
+}
+
+.occupied:hover label, window-box:hover window-label {
+    color: @autumn_foreground;
+}
+
+.bar-button.active, .bar-button.empty-active, active-window-box.bar-button {
     background-color: @autumn_selection;
-    box-shadow: 0 0 15px alpha(@autumn_accent, 0.4);
+    border-bottom-color: @autumn_accent;
+    box-shadow: none;
+    font-weight: 500;
+}
+
+.active label, .empty-active label, active-window-box window-label {
+    color: @autumn_accent;
+    font-weight: 500;
+}
+
+.bar-button.active:hover, .bar-button.empty-active:hover, active-window-box.bar-button:hover {
+    background-color: @autumn_selection;
+    box-shadow: none;
+}
+
+.numeric, window-label {
+    font-size: 14px;
+}
+
+.numeric {
+    padding: 0;
+    margin: 0;
+}
+
+date-label {
+    color: @autumn_foreground;
+    font-weight: 500;
+}
+
+.status-group {
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.status-group, .status-group * {
+    color: @autumn_secondary;
+}
+
+.status-group.warning {
+    background-color: @autumn_warning_background;
+}
+
+.status-group.warning * {
+    color: @autumn_warning;
+}
+
+.status-group.critical {
+    background-color: @autumn_critical_background;
+}
+
+.status-group.critical * {
+    color: @autumn_accent;
 }
 
 icon-image {
-    background-color: @autumn_surface;
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
+}
+
+tag-label {
+    padding: 0 4px;
+    font-size: 13px;
+    color: @autumn_secondary;
 }
 
 workspace-window-box-active {
-    background-color: @autumn_surface;
+    background-color: transparent;
 }

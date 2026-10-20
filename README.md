@@ -57,7 +57,30 @@ The lookup order is:
 CSS import. It matches the warm white, saturated red, and cocoa colors in the
 Kitty/tmux palette. The former embedded stylesheet is preserved unchanged in
 `themes/windows-11-light.css`. The Autumn theme imports that stylesheet to keep
-its layout and original font stack, overriding only its colors.
+its original font stack and refines its spacing, colors, and active indicators.
+
+### Status-bar experiment
+
+The `experiment/autumn-status-bars` branch keeps the warm-white background opaque
+and replaces active-item glows with a peach fill and a 2 px red underline.
+The top and bottom bars target 36 px and 38 px respectively, with 14 px text,
+4 px workspace gaps, 6 px status gaps, 12 px workspace-group gaps, and 18 px icons.
+
+The top bar contains workspaces, compact CPU/memory/battery percentages, and
+the clock. The more button toggles CPU frequency and used/total memory;
+the date and full memory values are also available in tooltips. Numeric labels
+reserve their width and use tabular digits to prevent updates shifting the bar.
+System icons are symbolic and follow the palette; application icons retain
+their original colors without individual background tiles.
+
+Normal metrics use secondary brown. CPU usage warns at 85% and becomes critical
+at 95%; memory usage uses 80%/90%. A discharging battery warns at 20% and becomes
+critical at 10%. Warning/error icons accompany amber/red backgrounds, so alerts
+do not rely on color alone. Charging batteries do not trigger low-charge alerts.
+
+The bottom bar remains the task list. Long titles are ellipsized, with full
+window information in tooltips. Overflow scrolls horizontally using the wheel
+or trackpad, without adding a scrollbar or growing the panel.
 
 To select the saved theme, change `theme.css` to:
 

@@ -108,6 +108,13 @@ mod tests {
         ] {
             load_file(&root.join(theme)).unwrap();
         }
+        let provider = load_file(&root.join("themes/autumn-light.css")).unwrap();
+        crate::init_style(&provider);
+        crate::tests::assert_refined_widgets();
+        gtk::style_context_remove_provider_for_display(
+            &gtk::gdk::Display::default().unwrap(),
+            &provider,
+        );
         assert!(load_file(&root.join("themes/missing.css")).is_err());
         let invalid =
             env::temp_dir().join(format!("epic-bar-invalid-theme-{}.css", std::process::id()));

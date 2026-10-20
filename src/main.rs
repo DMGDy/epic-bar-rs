@@ -14,48 +14,20 @@
 *   You should have received a copy of the GNU General Public License
 *   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-use std::{
-    thread,
-    time::Duration,
-    sync::mpsc,
-    rc::Rc,
-    cell::Cell,
-    path::Path,
-    fs,
-    io,
-};
+use std::{cell::Cell, fs, io, path::Path, rc::Rc, sync::mpsc, thread, time::Duration};
 
 use gtk::{
-    prelude::*,
-    Application,
-    ApplicationWindow,
-    Box,
-    Label,
-    Button,
-    Orientation,
-    Align,
-    StyleProvider,
-    Image,
-    gio,
-    gdk::Display,
-    glib::{
-        ControlFlow,
-        clone,
-    },
-    glib
+    gdk::Display, gio, glib, glib::ControlFlow, pango, prelude::*, Align, Application,
+    ApplicationWindow, Box, Button, Image, Label, Orientation, StyleProvider, ToggleButton,
 };
 
-use gtk4_layer_shell::{
-    LayerShell,
-    Layer,
-    Edge,
-};
+use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
-mod workspaces;
 mod status;
 mod theme;
+mod workspaces;
 
-use crate::status::Cpu;
+use crate::status::{Cpu, StatusLevel};
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 // This cannot keep going
@@ -87,19 +59,19 @@ fn main() -> glib::ExitCode {
 }
 
 fn top_bar(app: &Application) {
-
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
         .hexpand(true)
         .hexpand_set(true)
         .homogeneous(false)
+        .spacing(12)
         .css_name("main-box")
         .build();
 
     let workspace_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .spacing(0)
+        .spacing(4)
         .css_name("workspaces-container")
         .build();
 
@@ -111,94 +83,64 @@ fn top_bar(app: &Application) {
     let status_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .hexpand(false)
+        .spacing(6)
         .build();
-    
-    // button to reveal all statuses
-    let status_reveal_button = Button::builder()
+
+    let status_reveal_button = ToggleButton::builder()
         .css_name("status-reveal-button")
-        .label("󰁚")
+        .css_classes(["bar-button"])
+        .icon_name("view-more-symbolic")
+        .tooltip_text("Show CPU frequency and memory capacity")
         .build();
-    let has = has_battery().unwrap_or(false);
+    let has = has_battery().unwrap_or_else(|error| {
+        eprintln!("epic-bar-rs: cannot detect battery: {error}");
+        false
+    });
 
     let battery_container = Box::builder()
         .orientation(Orientation::Horizontal)
+        .css_classes(["status-group"])
         .hexpand(false)
+        .valign(Align::Center)
+        .spacing(4)
         .build();
 
-    let battery_image = Image::builder()
-        .file("assets/status/battery-missing.svg")
-        .css_name("icon-image")
-        .pixel_size(20)
-        .build();
-
-    // reveal text if clicked, or hovered
-    let battery_icon = Button::builder()
-        .css_name("battery-icon")
-        .name("battery-icon")
-        .visible(true)
-        .build();
-
-    let battery_label = Button::builder()
-        .label("N/A")
-        .hexpand(false)
-        .visible(true)
-        .css_name("battery-label")
-        .name("battery-label")
-        .build();
-
+    let battery_image = status_icon("battery-missing-symbolic");
+    let battery_label = metric_label("battery-label", 5);
 
     let mem_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .hexpand(true)
-        .build();
-    
-    let mem_icon = Image::builder()
-        .file("assets/devices/memory.svg")
-        .css_name("mem-icon")
-        .visible(true)
+        .css_classes(["status-group"])
+        .hexpand(false)
+        .valign(Align::Center)
+        .spacing(4)
         .build();
 
-    let mem_label = Button::builder()
-        .label("N/A")
-        .hexpand(false)
-        .visible(true)
-        .css_name("mem-label")
-        .build();
+    let mem_icon = status_icon("drive-harddisk-symbolic");
+    let mem_label = metric_label("mem-label", 5);
+    let mem_detail_label = metric_label("mem-label", 17);
+    mem_detail_label.set_visible(false);
 
     let cpu_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .hexpand(true)
+        .css_classes(["status-group"])
+        .hexpand(false)
+        .valign(Align::Center)
+        .spacing(4)
         .build();
 
-    let cpu_image = Image::builder()
-        .file("assets/status/indicator-cpufreq.svg")
-        .css_name("cpu-image")
-        .pixel_size(20)
-        .build();
-
-    let cpu_label = Button::builder()
-        .label("-------")
-        .hexpand(true)
-        .visible(true)
-        .css_name("cpu-label")
-        .build();
-    
-    let cpu_load_label = Label::builder()
-        .label("------")
-        .hexpand(true)
-        .css_name("cpu-load-label")
-        .build();
+    let cpu_image = status_icon("utilities-system-monitor-symbolic");
+    let cpu_label = metric_label("cpu-label", 8);
+    cpu_label.set_visible(false);
+    let cpu_load_label = metric_label("cpu-load-label", 5);
 
     let date_container = Button::builder()
         .css_name("date-container")
+        .css_classes(["bar-button"])
         .build();
 
-    let date_label= Label::builder()
-        .lines(2)
-        .css_name("date-label")
-        .name("date-label")
-        .label("date\ntime")
-        .build();
+    let date_label = metric_label("date-label", 8);
+    date_label.set_text("00:00:00");
 
     cpu_container.append(&cpu_image);
     cpu_container.append(&cpu_load_label);
@@ -206,10 +148,10 @@ fn top_bar(app: &Application) {
 
     mem_container.append(&mem_icon);
     mem_container.append(&mem_label);
+    mem_container.append(&mem_detail_label);
 
     if has {
-        battery_icon.set_child(Some(&battery_image));
-        battery_container.append(&battery_icon);
+        battery_container.append(&battery_image);
         battery_container.append(&battery_label);
     }
 
@@ -218,28 +160,36 @@ fn top_bar(app: &Application) {
     status_container.append(&status_reveal_button);
     status_container.append(&cpu_container);
     status_container.append(&mem_container);
-    status_container.append(&battery_container);
+    if has {
+        status_container.append(&battery_container);
+    }
 
-    let toggle = Rc::new(Cell::new(false));
+    connect_status_toggle(
+        &status_reveal_button,
+        &cpu_label,
+        &mem_label,
+        &mem_detail_label,
+    );
 
     // init the container
-    for n in 1..workspaces::WORKSPACE_COUNT+1 {
+    for n in 1..workspaces::WORKSPACE_COUNT + 1 {
         let workspace_button = Button::builder()
-            .label(format!("{}",n))
-            .name(format!("{}",n))
+            .label(format!("{}", n))
+            .css_classes(["bar-button"])
+            .name(format!("{}", n))
             .visible(true)
             .focus_on_click(true)
             .build();
 
         let nclone = n.clone();
 
-        workspace_button.connect_clicked( move |_| {
+        workspace_button.connect_clicked(move |_| {
             gio::spawn_blocking(move || {
                 workspaces::switch_workspace(nclone);
             });
         });
         workspace_container.append(&workspace_button);
-    };
+    }
 
     populate_workspace_box(&workspace_container);
 
@@ -256,7 +206,7 @@ fn top_bar(app: &Application) {
         .build();
 
     LayerShell::init_layer_shell(&window);
-    LayerShell::set_layer(&window,Layer::Top);
+    LayerShell::set_layer(&window, Layer::Top);
 
     LayerShell::auto_exclusive_zone_enable(&window);
 
@@ -267,33 +217,20 @@ fn top_bar(app: &Application) {
     window.set_decorated(true);
     window.present();
 
-    let (tx,rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
 
     let workspace_clone = workspace_container.clone();
     // check if workspace activity in different thread to avoid blocking
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(50));
-            if workspaces::is_activity() {
-                tx.send(()).unwrap();
-            }
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(50));
+        if workspaces::is_activity() {
+            tx.send(()).unwrap();
         }
     });
-    
-    let has = has.clone();
-    let battery_image = battery_image.clone();
-    let battery_label = battery_label.clone();
-    let date_container = date_container.clone();
-    let mem_label = mem_label.clone();
-    let cpu_label = cpu_label.clone();
-    let cpu_load_label = cpu_load_label.clone();
-    let cpu_image = cpu_image.clone();
 
-    // on main thread check if signal recieved that there is to update 
+    // on main thread check if signal recieved that there is to update
 
-    glib::source::timeout_add_local(Duration::from_millis(50),move || {
-
-
+    glib::source::timeout_add_local(Duration::from_millis(50), move || {
         if let Ok(_) = rx.try_recv() {
             populate_workspace_box(&workspace_clone);
         }
@@ -306,31 +243,107 @@ fn top_bar(app: &Application) {
     let mut cpu = cpu.clone();
 
     // update other stuff less frequently
-    glib::source::timeout_add_seconds_local(1,move || {
-
+    glib::source::timeout_add_seconds_local(1, move || {
         if has {
             let battery = status::get_battery_info();
-            battery_label.set_label(&format!("{}%",battery.capacity));
-            let svg_path = std::path::Path::new(&battery.icon);
-            battery_image.set_from_file(Some(&svg_path));
-            let tooltip_str = battery.tooltip_text;
-            battery_image.set_tooltip_text(Some(&tooltip_str));
+            battery_label.set_text(&format!("{}%", battery.capacity));
+            update_status(
+                &battery_container,
+                &battery_image,
+                battery.level(),
+                &battery.icon,
+            );
+            battery_container.set_tooltip_text(Some(&battery.tooltip_text));
         }
 
         let dt = status::get_datetime();
-        date_container.set_label(&format!("{dt}"));
+        date_label.set_text(&dt.time);
+        date_container.set_tooltip_text(Some(&dt.date));
 
         let memory = status::get_mem_info();
+        mem_label.set_text(&format!("{:.0}%", memory.used_percent));
+        mem_detail_label.set_text(&memory.string);
+        mem_container.set_tooltip_text(Some(&format!("Memory: {}", memory.string)));
+        update_status(
+            &mem_container,
+            &mem_icon,
+            StatusLevel::memory(memory.used_percent),
+            "drive-harddisk-symbolic",
+        );
 
-        mem_label.set_label(&memory.string);
-
-        cpu_label.set_label(&Cpu::get_avg_freq());
+        if cpu_label.is_visible() {
+            cpu_label.set_text(&Cpu::get_avg_freq());
+        }
         let cpu_load = cpu.get_cpu_load();
-        cpu_load_label.set_label(&format!("{:.2}%",cpu_load));
+        cpu_load_label.set_text(&format!("{:.0}%", cpu_load));
+        cpu_container.set_tooltip_text(Some(&format!("CPU usage: {cpu_load:.1}%")));
+        update_status(
+            &cpu_container,
+            &cpu_image,
+            StatusLevel::cpu(cpu_load),
+            "utilities-system-monitor-symbolic",
+        );
 
-        cpu_image.set_from_file(Some(&cpu.get_cpu_image()));
-        
         ControlFlow::Continue
+    });
+}
+
+fn metric_label(css_name: &str, width: i32) -> Label {
+    let label = Label::builder()
+        .css_name(css_name)
+        .css_classes(["numeric"])
+        .label("--")
+        .width_chars(width)
+        .max_width_chars(width)
+        .ellipsize(pango::EllipsizeMode::End)
+        .single_line_mode(true)
+        .xalign(1.0)
+        .build();
+    let attributes = pango::AttrList::new();
+    attributes.insert(pango::AttrFontFeatures::new("tnum=1"));
+    label.set_attributes(Some(&attributes));
+    label
+}
+
+fn status_icon(name: &str) -> Image {
+    Image::builder()
+        .icon_name(name)
+        .pixel_size(18)
+        .css_classes(["status-icon"])
+        .build()
+}
+
+fn update_status(group: &Box, icon: &Image, level: StatusLevel, normal_icon: &str) {
+    group.remove_css_class("warning");
+    group.remove_css_class("critical");
+    let name = match level {
+        StatusLevel::Normal => normal_icon,
+        StatusLevel::Warning => {
+            group.add_css_class("warning");
+            "dialog-warning-symbolic"
+        }
+        StatusLevel::Critical => {
+            group.add_css_class("critical");
+            "dialog-error-symbolic"
+        }
+    };
+    icon.set_icon_name(Some(name));
+}
+
+fn connect_status_toggle(toggle: &ToggleButton, cpu: &Label, memory: &Label, detail: &Label) {
+    let cpu = cpu.clone();
+    let memory = memory.clone();
+    let detail = detail.clone();
+    toggle.connect_toggled(move |toggle| {
+        let expanded = toggle.is_active();
+        cpu.set_visible(expanded);
+        memory.set_visible(!expanded);
+        detail.set_visible(expanded);
+        toggle.set_tooltip_text(Some(if expanded {
+            "Hide CPU frequency and memory capacity"
+        } else {
+            "Show CPU frequency and memory capacity"
+        }));
     });
 }
 
@@ -339,15 +352,16 @@ fn init_style(provider: &impl IsA<StyleProvider>) {
     gtk::style_context_add_provider_for_display(
         &display.unwrap(),
         provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
-fn populate_workspace_box(workspace_container: &Box){
+fn populate_workspace_box(workspace_container: &Box) {
     let workspaces = workspaces::get_workspaces();
     let mut ws_opt = workspace_container.first_child();
 
     while let Some(ref workspace) = ws_opt {
-        let tag :usize = workspace.widget_name().as_str().parse().unwrap();
+        let tag: usize = workspace.widget_name().as_str().parse().unwrap();
         let workspace_info_opt = workspaces.get(&tag);
         // make sure each workspace button has only one active class at a time
         if let Some(workspace_info) = workspace_info_opt {
@@ -365,16 +379,14 @@ fn populate_workspace_box(workspace_container: &Box){
                 workspace.remove_css_class("empty-active");
                 workspace.add_css_class("occupied");
             }
-        }
-        else {
+        } else {
             workspace.set_visible(false);
-        }    
+        }
         ws_opt = workspace.next_sibling();
     }
 }
 
 fn bottom_bar(app: &Application) {
-    
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
@@ -384,35 +396,18 @@ fn bottom_bar(app: &Application) {
         .css_name("main-box")
         .build();
 
-
     let workspace_windows_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .hexpand(true)
         .vexpand(true)
         .homogeneous(false)
+        .spacing(12)
         .css_name("workspace-windows-container")
         .build();
 
-    // so minimum vertical space is occupied when displayed
-    let reserve = Button::builder()
-        .label(" ")
-        .build();
-
-    workspace_windows_container.append(&reserve);
-
-    // needed for no shrinking in screenshot mode
-    let fill = Box::builder()
-        .hexpand(true)
-        .halign(Align::BaselineFill)
-        .build();
-
-    let fill2 = Button::builder()
-        .hexpand(true)
-        .build();
-
-    main_container.append(&workspace_windows_container);
-    main_container.append(&fill);
-    main_container.append(&fill2);
+    populate_windows_container(&workspace_windows_container);
+    let tasks = task_scroller(&workspace_windows_container);
+    main_container.append(&tasks);
     let window = ApplicationWindow::builder()
         .css_name("bottom-bar")
         .resizable(true)
@@ -420,7 +415,7 @@ fn bottom_bar(app: &Application) {
         .child(&main_container)
         .build();
     LayerShell::init_layer_shell(&window);
-    LayerShell::set_layer(&window,Layer::Top);
+    LayerShell::set_layer(&window, Layer::Top);
 
     LayerShell::auto_exclusive_zone_enable(&window);
 
@@ -430,54 +425,44 @@ fn bottom_bar(app: &Application) {
 
     window.set_decorated(true);
     window.present();
-    let (tx,rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
 
     // check if workspace activity in different thread to avoid blocking
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(25));
-            if workspaces::is_activity() {
-                tx.send(()).unwrap();
-            }
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(25));
+        if workspaces::is_activity() {
+            tx.send(()).unwrap();
         }
     });
 
-
-
-    glib::source::idle_add_local(move || {
-        thread::sleep(Duration::from_millis(25));
-
-         if let Ok(_) = rx.try_recv() {
+    glib::source::timeout_add_local(Duration::from_millis(25), move || {
+        if let Ok(_) = rx.try_recv() {
             populate_windows_container(&workspace_windows_container);
         }
 
         ControlFlow::Continue
     });
-
 }
 
 fn populate_windows_container(container: &Box) {
     let workspaces = workspaces::get_workspaces();
 
-    let sorted: &mut Vec<_> = &mut workspaces
-        .into_iter()
-        .collect();
+    let sorted: &mut Vec<_> = &mut workspaces.into_iter().collect();
 
     // sort by recently used
-    sorted.sort_by(|w1,w2| w1.1.order.cmp(&w2.1.order));
+    sorted.sort_by(|w1, w2| w1.1.order.cmp(&w2.1.order));
 
     let mut tag_opt = container.first_child();
 
     while let Some(tag) = tag_opt {
         // empty container with everything
-        container.remove(&tag);   
+        container.remove(&tag);
         tag_opt = container.first_child()
     }
 
-
     // start filling with occupied workspaces
-    for (tag,workspace) in sorted {
-        // Box will contain 
+    for (tag, workspace) in sorted {
+        // Box will contain
         //  - label of tag
         //  - button for each window
         //      - child is box has icon
@@ -492,52 +477,51 @@ fn populate_windows_container(container: &Box) {
         };
 
         let workspace_box = Box::builder()
-            .name(format!("{}",tag))
+            .name(format!("{}", tag))
             .css_name(workspace_windows_css)
             .vexpand(true)
+            .spacing(4)
             .build();
 
         let tag_label = Label::builder()
-            .label(format!("{}",tag))
+            .label(format!("{}", tag))
             .css_name("tag-label")
             .build();
 
         workspace_box.append(&tag_label);
 
         if workspace.windows.is_empty() {
-
             let window_button = Button::builder()
                 .css_name("window-box-empty")
+                .css_classes(["bar-button"])
                 .label("󰟢")
                 .build();
 
             workspace_box.append(&window_button);
         }
 
-
         for window in &workspace.windows {
-
             // creating box to be child of button
             // check if active or not
             let css_name = if window.order == 0 && workspace.order == 0 {
                 "active-window-box".to_owned()
-            } else  {
+            } else {
                 "window-box".to_owned()
             };
 
             let window_button = Button::builder()
                 .css_name(&css_name)
-                .tooltip_text(&format!("{}",window.info))
+                .css_classes(["bar-button"])
+                .tooltip_text(&format!("{}", window.info))
                 .build();
 
             // box has icon then label
-            let icon_label_box = Box::builder()
-                .build();
-            
+            let icon_label_box = Box::builder().spacing(6).build();
+
             let icon = Image::builder()
-                .file(&format!("assets/apps/{}.svg",window.class))
+                .file(&format!("assets/apps/{}.svg", window.class))
                 .css_name("icon-image")
-                .pixel_size(20)
+                .pixel_size(18)
                 .build();
 
             icon_label_box.append(&icon);
@@ -545,14 +529,9 @@ fn populate_windows_container(container: &Box) {
             window_button.set_child(Some(&icon_label_box));
             let address = window.address.clone();
             // switch to clicked workspace
-            window_button.connect_clicked(move |_| {
-                workspaces::switch_window(&address)
-            });
+            window_button.connect_clicked(move |_| workspaces::switch_window(&address));
 
-            let window_label = Label::builder()
-                .label(format!("{}",window.name))
-                .css_name("window-label")
-                .build();
+            let window_label = task_label(&window.name);
 
             icon_label_box.append(&window_label);
 
@@ -562,16 +541,169 @@ fn populate_windows_container(container: &Box) {
     }
 }
 
-fn has_battery() -> io::Result<bool>{
+fn task_label(title: &str) -> Label {
+    Label::builder()
+        .label(title)
+        .css_name("window-label")
+        .ellipsize(pango::EllipsizeMode::End)
+        .max_width_chars(24)
+        .single_line_mode(true)
+        .build()
+}
+
+fn task_scroller(container: &Box) -> gtk::ScrolledWindow {
+    let tasks = gtk::ScrolledWindow::builder()
+        .hexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::External)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .child(container)
+        .build();
+    let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    let adjustment = tasks.hadjustment();
+    scroll.connect_scroll(move |_, _, dy| {
+        if adjustment.upper() > adjustment.page_size() {
+            adjustment.set_value(adjustment.value() + dy * 48.0);
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    tasks.add_controller(scroll);
+    tasks
+}
+
+fn has_battery() -> io::Result<bool> {
     let power_supply = Path::new("/sys/class/power_supply");
     if power_supply.is_dir() {
         for entry in fs::read_dir(power_supply)? {
             let entry = entry?;
             let path = entry.path();
             let path_name = path.to_str().to_owned().unwrap();
-            return Ok(path_name.contains("BAT"))
-
+            return Ok(path_name.contains("BAT"));
         }
     }
-        return Ok(false)
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(crate) fn assert_refined_widgets() {
+        let icons = gtk::IconTheme::for_display(&Display::default().unwrap());
+        for name in [
+            "utilities-system-monitor-symbolic",
+            "drive-harddisk-symbolic",
+            "view-more-symbolic",
+            "dialog-warning-symbolic",
+            "dialog-error-symbolic",
+            "battery-missing-symbolic",
+            "battery-caution-symbolic",
+            "battery-low-symbolic",
+            "battery-good-symbolic",
+            "battery-full-symbolic",
+            "battery-caution-charging-symbolic",
+            "battery-low-charging-symbolic",
+            "battery-good-charging-symbolic",
+            "battery-full-charging-symbolic",
+        ] {
+            assert!(icons.has_icon(name), "missing symbolic icon: {name}");
+        }
+
+        for (width, values) in [
+            (5, vec!["1%", "99%", "100%"]),
+            (8, vec!["999 MHz", "5.2 GHz", "12.0 GHz"]),
+            (17, vec!["1.0/8.0 GiB", "128.0/128.0 GiB"]),
+            (8, vec!["01:11:11", "23:59:59"]),
+        ] {
+            let label = metric_label("cpu-load-label", width);
+            let mut previous = None;
+            for value in values {
+                label.set_text(value);
+                let (_, natural, _, _) = label.measure(Orientation::Horizontal, -1);
+                let (_, height, _, _) = label.measure(Orientation::Vertical, natural);
+                label.allocate(natural, height, -1, None);
+                assert!(
+                    !label.layout().is_ellipsized(),
+                    "metric was clipped: {value}"
+                );
+                if let Some(previous) = previous {
+                    assert_eq!(natural, previous, "metric width changed for {value}");
+                }
+                previous = Some(natural);
+            }
+        }
+
+        let cpu = metric_label("cpu-label", 8);
+        let memory = metric_label("mem-label", 5);
+        let detail = metric_label("mem-label", 17);
+        cpu.set_visible(false);
+        detail.set_visible(false);
+        let toggle = ToggleButton::new();
+        connect_status_toggle(&toggle, &cpu, &memory, &detail);
+        toggle.set_active(true);
+        assert!(cpu.is_visible() && detail.is_visible() && !memory.is_visible());
+        toggle.set_active(false);
+        assert!(!cpu.is_visible() && !detail.is_visible() && memory.is_visible());
+
+        let group = Box::builder().css_classes(["status-group"]).build();
+        let icon = status_icon("drive-harddisk-symbolic");
+        group.append(&icon);
+        group.append(&memory);
+        let (_, normal_width, _, _) = group.measure(Orientation::Horizontal, -1);
+        for (level, class, name) in [
+            (StatusLevel::Warning, "warning", "dialog-warning-symbolic"),
+            (StatusLevel::Critical, "critical", "dialog-error-symbolic"),
+            (StatusLevel::Normal, "", "drive-harddisk-symbolic"),
+        ] {
+            update_status(&group, &icon, level, "drive-harddisk-symbolic");
+            assert_eq!(icon.icon_name().as_deref(), Some(name));
+            assert_eq!(group.has_css_class("warning"), class == "warning");
+            assert_eq!(group.has_css_class("critical"), class == "critical");
+            let (_, width, _, _) = group.measure(Orientation::Horizontal, -1);
+            assert_eq!(width, normal_width, "alert state changed group width");
+            let (_, height, _, _) = group.measure(Orientation::Vertical, -1);
+            assert!(height <= 35, "status group is too tall: {height}px");
+        }
+
+        let title = task_label(&"A very long window title ".repeat(20));
+        let (_, width, _, _) = title.measure(Orientation::Horizontal, -1);
+        assert!(
+            width <= 240,
+            "task title exceeds its width budget: {width}px"
+        );
+        assert_eq!(title.ellipsize(), pango::EllipsizeMode::End);
+
+        let tasks = task_scroller(&Box::new(Orientation::Horizontal, 4));
+        assert_eq!(tasks.hscrollbar_policy(), gtk::PolicyType::External);
+        assert_eq!(tasks.vscrollbar_policy(), gtk::PolicyType::Never);
+        let controllers = tasks.observe_controllers();
+        let scroll = (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .filter_map(|item| item.downcast::<gtk::EventControllerScroll>().ok())
+            .find(|scroll| scroll.flags() == gtk::EventControllerScrollFlags::VERTICAL)
+            .expect("wheel-to-horizontal-scroll controller");
+        let adjustment = tasks.hadjustment();
+        adjustment.configure(0.0, 0.0, 1000.0, 1.0, 100.0, 300.0);
+        assert!(scroll.emit_by_name::<bool>("scroll", &[&0.0f64, &1.0f64]));
+        assert_eq!(adjustment.value(), 48.0);
+        assert!(scroll.emit_by_name::<bool>("scroll", &[&0.0f64, &-1.0f64]));
+        assert_eq!(adjustment.value(), 0.0);
+        adjustment.configure(0.0, 0.0, 300.0, 1.0, 100.0, 300.0);
+        assert!(!scroll.emit_by_name::<bool>("scroll", &[&0.0f64, &1.0f64]));
+
+        for (name, expected) in [("top-bar", 36..=38), ("bottom-bar", 38..=40)] {
+            let panel = Box::builder().css_name(name).build();
+            let row = Box::builder().css_name("main-box").build();
+            let button = Button::builder()
+                .css_classes(["bar-button"])
+                .label("Workspace")
+                .build();
+            row.append(&button);
+            panel.append(&row);
+            let (_, height, _, _) = panel.measure(Orientation::Vertical, -1);
+            assert!(expected.contains(&height), "{name} height is {height}px");
+        }
+    }
 }

@@ -29,6 +29,7 @@
     cargoLock.lockFile = ./Cargo.lock;
 
     buildInputs = with pkgs; [
+      adwaita-icon-theme
       dbus
       glib
       pango
