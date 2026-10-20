@@ -57,7 +57,79 @@ The lookup order is:
 CSS import. It matches the warm white, saturated red, and cocoa colors in the
 Kitty/tmux palette. The former embedded stylesheet is preserved unchanged in
 `themes/windows-11-light.css`. The Autumn theme imports that stylesheet to keep
-its layout and original font stack, overriding only its colors.
+its original font stack and refines its spacing, colors, and active indicators.
+
+### Status-bar experiment
+
+This branch merges `event-driven-updates`: one persistent, reconnecting Hyprland
+event stream updates both bars from the same JSON workspace snapshot, coalescing
+event bursts instead of polling each bar separately. Runtime CPU-core detection
+and panic-free status reads are retained alongside the Autumn refinements.
+The current Lua dispatch syntax and reading dispatch replies are preserved.
+
+The `experiment/autumn-status-bars` branch keeps the warm-white background opaque
+and replaces active-item glows with a peach fill and a 2 px red underline.
+The top and bottom bars target 48 px and 38 px respectively, with 16 px text,
+4 px workspace/status gaps, 12 px bottom workspace-group gaps, and 18 px icons.
+Top workspace buttons are full-height 47 px squares, flush with the top, bottom
+separator, and left edge of the bar without rounded-corner gaps. Bottom task labels and
+workspace tags use the same 16 px text size as the top bar.
+Hovering a top workspace lists its current window titles in recent-use order;
+empty workspaces show "No open windows". The list refreshes with window opens,
+closes, title changes, and workspace moves. Titles are plain text, not markup.
+The active top-workspace highlight slides between buttons over 200 ms with
+ease-out motion, continuing smoothly if another workspace is selected mid-slide.
+It follows real button positions, stops requesting frames when settled, and
+respects GTK's disabled-animation setting. The highlight reads the existing
+Autumn palette from runtime CSS; the saved Windows theme keeps its static highlight.
+
+The top bar contains workspaces, active network devices, compact CPU/memory/battery
+percentages, and a two-row clock with the date (`YYYY/MM/DD`) above the time
+(`HH:MM:SS`), preceded by a symbolic calendar icon. Both rows are right-aligned;
+the taller top bar keeps them unclipped.
+The more button toggles CPU frequency and used/total memory;
+full memory values are also available in tooltips. Numeric labels
+use tabular digits and natural text widths, without spare character slots or
+leading icon-to-value whitespace. Widths may change when the digit count changes;
+the fixed-format clock stays stable. The memory and calendar groups have a
+compact 4 px inter-group gap.
+System icons remain symbolic but use brighter colors independent of the Autumn
+palette: blue CPU, purple memory, cyan wired links, green Wi-Fi and battery,
+teal charging, pink calendar, and an orange more button. Checking/offline links
+are slate; warning icons turn amber and critical icons red. Metric text and
+alert backgrounds keep their existing Autumn colors. Application icons retain
+their original colors without individual background tiles.
+
+Network devices follow the feature from `event-driven-updates` (`fadfb6d`,
+`d85b608`): every physical interface with an up link and carrier is shown,
+excluding loopback and virtual/container interfaces. The IPv4 default-route
+device appears first, followed by other devices alphabetically. Wi-Fi shows its
+SSID when available, with the device name in its tooltip; wired links show their
+device names. Labels remain visible in the compact view, and long names are
+ellipsized with full values in tooltips.
+
+Network reads and SSID queries run off the GTK thread. Each wireless interface
+has its own 10-second SSID cache; packaged `iw` queries have a timeout. Unchanged
+device lists retain their widgets. No active links shows `Offline`; enumeration
+failures instead show `Network error` with details in the tooltip and stderr.
+
+Normal metrics use secondary brown. CPU usage warns at 85% and becomes critical
+at 95%; memory usage uses 80%/90%. A discharging battery warns at 20% and becomes
+critical at 10%. Warning/error icons accompany amber/red backgrounds, so alerts
+do not rely on color alone. Charging batteries do not trigger low-charge alerts.
+
+The bottom bar remains the task list. Buttons are retained by Hyprland window
+address: focus changes animate windows and workspace tags into their existing
+most-recently-used order over 200 ms, rather than rebuilding the entire strip.
+Rapid switches retarget from the visible positions; disabled GTK animations snap
+directly to the new order. Titles, icons, tooltips, and click handlers stay with
+their window when it changes position or workspace.
+Buttons reserve their measured icon/title width, remeasured as titles grow or
+shrink. Only long titles are ellipsized, with full window information in tooltips.
+Overflow scrolls horizontally using the wheel
+or trackpad, without adding a scrollbar or growing the panel.
+All Autumn tooltips use an explicit warm-white background, dark cocoa text,
+a subtle border, and 16 px text, independent of GTK's light/dark preference.
 
 To select the saved theme, change `theme.css` to:
 
@@ -115,7 +187,5 @@ Things to do in order of priority:
 ## Known Issues
 * Only expects and appears on a single display
 * If display is turned off and on, bar is no longer present but process still running
-* Certain Website URLS (or window titles for that matter) crash the bar
-* on 64 core cpu, always showing ~96-100% usage
 * ghostty has no current icons
     * need to properly create submodules of assets rather than coppying the files...

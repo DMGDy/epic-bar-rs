@@ -7,8 +7,12 @@
 @define-color autumn_accent #8c1612;
 @define-color autumn_selection #e6bca9;
 @define-color autumn_surface #f0e4dc;
+@define-color autumn_border #d9c5b9;
+@define-color autumn_warning #703900;
+@define-color autumn_warning_background #f6e3c2;
+@define-color autumn_critical_background #f4d3c7;
 
-window, top-bar, bottom-bar {
+window, top-bar, bottom-bar, viewport {
     background-color: @autumn_background;
 }
 
@@ -16,45 +20,210 @@ button, label, box {
     color: @autumn_foreground;
 }
 
-button label, status-reveal-button, battery-icon, mem-icon,
-battery-label, mem-label, cpu-label, cpu-load-label,
-date-container, active-window-box label {
+tooltip.background {
+    background-color: @autumn_background;
+    background-image: none;
     color: @autumn_foreground;
+    border: 1px solid @autumn_border;
+    border-radius: 6px;
+    padding: 8px 10px;
 }
 
-button:hover, .occupied:hover, date-container:hover, window-box:hover {
+tooltip label {
+    color: @autumn_foreground;
+    font-size: 16px;
+}
+
+top-bar, bottom-bar {
+    padding: 0 8px;
+}
+
+top-bar {
+    padding-left: 0;
+    border-bottom: 1px solid @autumn_border;
+}
+
+bottom-bar {
+    border-top: 1px solid @autumn_border;
+}
+
+top-bar main-box {
+    min-height: 47px;
+}
+
+bottom-bar main-box {
+    min-height: 37px;
+}
+
+.bar-button {
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 5px 10px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 4px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    font-size: 16px;
+    transition: background-color 100ms ease;
+}
+
+.bar-button:hover {
     background-color: @autumn_surface;
     color: @autumn_foreground;
 }
 
-.occupied, .occupied label, .empty-active, .empty-active label,
-tag-label, window-box, window-box label, window-box-empty {
-    color: @autumn_secondary;
-}
-
-.occupied:hover label, window-box:hover label {
-    color: @autumn_foreground;
-}
-
-.active, .empty-active, active-window-box {
-    background-color: @autumn_selection;
-    color: @autumn_foreground;
-    box-shadow: 0 0 10px alpha(@autumn_accent, 0.25);
-}
-
-.active label, .empty-active label {
+.bar-button:checked {
+    background-color: @autumn_surface;
     color: @autumn_accent;
 }
 
-.active:hover, .empty-active:hover, active-window-box:hover {
+.bar-button:focus-visible {
+    outline: 1px solid @autumn_accent;
+    outline-offset: -2px;
+}
+
+.occupied, .occupied label, window-box, window-box window-label, window-box-empty {
+    color: @autumn_secondary;
+}
+
+.occupied:hover label, window-box:hover window-label {
+    color: @autumn_foreground;
+}
+
+.bar-button.active, .bar-button.empty-active, active-window-box.bar-button {
     background-color: @autumn_selection;
-    box-shadow: 0 0 15px alpha(@autumn_accent, 0.4);
+    border-bottom-color: @autumn_accent;
+    box-shadow: none;
+    font-weight: 500;
+}
+
+.active label, window-box.active window-label, .empty-active label, active-window-box window-label {
+    color: @autumn_accent;
+    font-weight: 500;
+}
+
+.bar-button.active:hover, .bar-button.empty-active:hover, active-window-box.bar-button:hover {
+    background-color: @autumn_selection;
+    box-shadow: none;
+}
+
+.animated-workspaces .bar-button.active,
+.animated-workspaces .bar-button.empty-active {
+    background-color: transparent;
+    border-bottom-color: transparent;
+}
+
+.numeric, window-label, net-label, bottom-bar label, .bar-button label {
+    font-size: 16px;
+}
+
+.workspace-button {
+    min-width: 47px;
+    min-height: 45px;
+    padding: 0;
+    border-radius: 0;
+}
+
+.numeric {
+    padding: 0;
+    margin: 0;
+}
+
+date-label {
+    color: @autumn_foreground;
+    font-weight: 500;
+}
+
+date-container.bar-button {
+    padding: 2px 6px;
+}
+
+.status-group {
+    padding: 3px;
+    border-radius: 4px;
+}
+
+.status-group, .status-group * {
+    color: @autumn_secondary;
+}
+
+.status-group.warning {
+    background-color: @autumn_warning_background;
+}
+
+.status-group.warning * {
+    color: @autumn_warning;
+}
+
+.status-group.critical {
+    background-color: @autumn_critical_background;
+}
+
+.status-group.critical * {
+    color: @autumn_accent;
+}
+
+/* Colorful status icons, independent of the surrounding text palette. */
+.status-cpu .status-icon {
+    color: #2563eb;
+}
+
+.status-memory .status-icon {
+    color: #9333ea;
+}
+
+.status-network .status-icon {
+    color: #0891b2;
+}
+
+.status-network.wireless .status-icon {
+    color: #16a34a;
+}
+
+.status-network.offline .status-icon,
+.status-network.pending .status-icon {
+    color: #64748b;
+}
+
+.status-battery .status-icon {
+    color: #15803d;
+}
+
+.status-battery.charging .status-icon {
+    color: #0d9488;
+}
+
+date-container .status-icon {
+    color: #db2777;
+}
+
+status-reveal-button image {
+    color: #c2410c;
+}
+
+.status-group.warning .status-icon {
+    color: #b45309;
+}
+
+.status-group.critical .status-icon {
+    color: #dc2626;
 }
 
 icon-image {
-    background-color: @autumn_surface;
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
+}
+
+tag-label {
+    padding: 0 4px;
+    font-size: 16px;
+    color: @autumn_secondary;
 }
 
 workspace-window-box-active {
-    background-color: @autumn_surface;
+    background-color: transparent;
 }

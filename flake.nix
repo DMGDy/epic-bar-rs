@@ -29,6 +29,7 @@
     cargoLock.lockFile = ./Cargo.lock;
 
     buildInputs = with pkgs; [
+      adwaita-icon-theme
       dbus
       glib
       pango
@@ -48,6 +49,11 @@
     postInstall = ''
       mkdir -p $out/share/epic-bar-rs/themes
       cp themes/*.css $out/share/epic-bar-rs/themes/
+    '';
+
+    preFixup = ''
+      gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw ]})
+      gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share)
     '';
 
   };
