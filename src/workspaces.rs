@@ -213,6 +213,8 @@ pub fn switch_window(adr: &String) {
     let _ = sock.write_all(format!(
             "dispatch hl.dsp.focus({{ window = \"address:0x{adr}\" }})"
     ).as_bytes());
+    // Hyprland 0.56 only runs the dispatch if the reply is read
+    let _ = sock.read_to_string(&mut String::new());
 
 }
 
@@ -223,6 +225,8 @@ pub fn switch_workspace(tag: usize) {
     let _ = sock.write_all(format!(
             "dispatch hl.dsp.focus({{ workspace = {tag} }})"
     ).as_bytes());
+    // Hyprland 0.56 only runs the dispatch if the reply is read
+    let _ = sock.read_to_string(&mut String::new());
    
 }
 
@@ -239,14 +243,11 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) {
 
     let mut tag  = usize::default();
 
-    while let Some(key) = iter.next() {
-        match key {
-            "ID" => {
-                tag = iter.peek().unwrap().parse().unwrap();
-            },
-
-            _ => {}
-        };
+    if iter.next() == Some("workspace") {
+        if iter.peek() == Some(&"ID") {
+            iter.next();
+        }
+        tag = iter.next().and_then(|t| t.parse().ok()).unwrap_or_default();
     }
 
     workspaces.entry(tag)
