@@ -45,6 +45,11 @@
       wrapGAppsHook
     ];
 
+    postInstall = ''
+      mkdir -p $out/share/epic-bar-rs/themes
+      cp themes/*.css $out/share/epic-bar-rs/themes/
+    '';
+
   };
   in {
     packages.${system}.default = epic-bar;

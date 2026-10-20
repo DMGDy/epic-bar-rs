@@ -41,6 +41,40 @@ or without flake:
 nix-shell
 ```
 
+## Themes
+
+Themes are GTK CSS files, loaded once at startup for both bars. Editing a theme
+does not require recompiling; restart the bar to apply changes.
+
+The lookup order is:
+
+1. `EPIC_BAR_THEME`, when set (an explicit missing or invalid file is an error).
+2. `$XDG_CONFIG_HOME/epic-bar-rs/theme.css`, or `~/.config/epic-bar-rs/theme.css`.
+3. The installed `share/epic-bar-rs/themes/autumn-light.css`.
+4. `theme.css` in the current directory, for development.
+
+`theme.css` selects the high-contrast **Autumn Light** theme using a relative
+CSS import. It matches the warm white, saturated red, and cocoa colors in the
+Kitty/tmux palette. The former embedded stylesheet is preserved unchanged in
+`themes/windows-11-light.css`. The Autumn theme imports that stylesheet to keep
+its layout and original font stack, overriding only its colors.
+
+To select the saved theme, change `theme.css` to:
+
+```css
+@import url("themes/windows-11-light.css");
+```
+
+Alternatively, choose a file for one launch:
+
+```sh
+EPIC_BAR_THEME="$PWD/themes/windows-11-light.css" ./target/release/epic-bar-rs
+```
+
+Relative imports resolve against the CSS file's directory. Unreadable files,
+invalid CSS, and missing imports are reported on stderr and stop startup rather
+than silently falling back to another theme.
+
 ## why?
 
 Most of the modules and behavior of what the bar should show has been implemented already through 
@@ -75,7 +109,7 @@ Things to do in order of priority:
 3. [ ] Clickeable icon (Functionality TBD)
 4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
     1. [X] With Icons
-5. [X] ~~Easy to change colors and fonts with form of config (big maybe)~~ css.rs 
+5. [X] Change colors and fonts using runtime CSS theme files
 6. [ ] Stop using `.unwrap()` and implement propper error handling (default values, fallback behavior/values)
 
 ## Known Issues

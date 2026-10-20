@@ -1,5 +1,3 @@
-// Windows 11 Style Theme - Light Mode
-pub const CSS: &str = "
 /* ============================================
    WINDOWS 11 STYLE THEME - LIGHT
    ============================================ */
@@ -282,5 +280,3 @@ workspace-window-box {
     border: none;
     background-color: transparent;
 }
-
-";

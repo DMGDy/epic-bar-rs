@@ -34,7 +34,6 @@ use gtk::{
     Button,
     Orientation,
     Align,
-    CssProvider,
     StyleProvider,
     Image,
     gio,
@@ -54,7 +53,7 @@ use gtk4_layer_shell::{
 
 mod workspaces;
 mod status;
-mod css;
+mod theme;
 
 use crate::status::Cpu;
 
@@ -62,18 +61,32 @@ const APP_ID: &str = "org.gtk_rs.epic_bar";
 // This cannot keep going
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
-    app.connect_activate(top_bar);
-    app.connect_activate(bottom_bar);
-    app.run()
+    let theme_failed = Rc::new(Cell::new(false));
+    let startup_failed = theme_failed.clone();
+    app.connect_startup(move |app| match theme::load() {
+        Ok(provider) => init_style(&provider),
+        Err(error) => {
+            eprintln!("epic-bar-rs: {error}");
+            startup_failed.set(true);
+            app.quit();
+        }
+    });
+    let activation_failed = theme_failed.clone();
+    app.connect_activate(move |app| {
+        if !activation_failed.get() {
+            top_bar(app);
+            bottom_bar(app);
+        }
+    });
+    let result = app.run();
+    if theme_failed.get() {
+        glib::ExitCode::FAILURE
+    } else {
+        result
+    }
 }
 
 fn top_bar(app: &Application) {
-
-    // default css props
-    let css_prov = CssProvider::new(); 
-    css_prov.load_from_string(css::CSS);
-
-    init_style(&css_prov);
 
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -362,12 +375,6 @@ fn populate_workspace_box(workspace_container: &Box){
 
 fn bottom_bar(app: &Application) {
     
-    let css_prov = CssProvider::new(); 
-    css_prov.load_from_string(css::CSS);
-
-    init_style(&css_prov);
-
-
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
