@@ -77,6 +77,10 @@ impl Default for Battery {
 }
 
 impl Battery {
+    pub fn is_charging(&self) -> bool {
+        self.status == BatteryStatus::Charging
+    }
+
     pub fn level(&self) -> StatusLevel {
         match self.status {
             BatteryStatus::Error => StatusLevel::Warning,
@@ -507,7 +511,9 @@ mod tests {
     fn battery_alerts_only_when_discharging_or_unknown() {
         let mut battery = Battery::default();
         assert_eq!(battery.level(), StatusLevel::Warning);
+        assert!(!battery.is_charging());
         battery.status = BatteryStatus::Discharging;
+        assert!(!battery.is_charging());
         for (capacity, expected) in [
             (0, StatusLevel::Critical),
             (10, StatusLevel::Critical),
@@ -521,9 +527,11 @@ mod tests {
         battery.capacity = 5;
         battery.status = BatteryStatus::Charging;
         assert_eq!(battery.level(), StatusLevel::Normal);
+        assert!(battery.is_charging());
         get_icon(&mut battery);
         assert_eq!(battery.icon, "battery-caution-charging-symbolic");
         battery.status = BatteryStatus::NotCharging;
         assert_eq!(battery.level(), StatusLevel::Normal);
+        assert!(!battery.is_charging());
     }
 }

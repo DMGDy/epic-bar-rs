@@ -24,12 +24,14 @@ use gtk::{
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
 mod network;
+mod selection;
 mod status;
+mod tasks;
 mod theme;
 mod workspaces;
 
 use crate::status::{Cpu, StatusLevel};
-use crate::workspaces::{Workspace, Workspaces};
+use crate::workspaces::Workspaces;
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 type NetworkSnapshot = Result<Vec<network::Network>, String>;
@@ -66,7 +68,7 @@ fn main() -> glib::ExitCode {
 
 fn build_ui(app: &Application) -> Result<(), String> {
     let state = workspaces::get_workspaces()?;
-    let workspace_container = top_bar(app, &state);
+    let (workspace_container, workspace_selection) = top_bar(app, &state);
     let windows_container = bottom_bar(app, &state);
     let (tx, rx) = async_channel::bounded::<workspaces::HyprEvent>(64);
 
@@ -111,27 +113,28 @@ fn build_ui(app: &Application) -> Result<(), String> {
                 Err(error) => {
                     eprintln!("epic-bar-rs: cannot refresh bars: {error}");
                     workspace_container.set_tooltip_text(Some(&error));
-                    windows_container.set_tooltip_text(Some(&error));
+                    windows_container.widget().set_tooltip_text(Some(&error));
                     continue;
                 }
             };
             workspace_container.set_tooltip_text(None);
-            windows_container.set_tooltip_text(None);
+            windows_container.widget().set_tooltip_text(None);
             populate_workspace_box(&workspace_container, &state);
-            populate_windows_container(&windows_container, &state);
+            workspace_selection.refresh();
+            windows_container.update(&state);
         }
     });
     Ok(())
 }
 
-fn top_bar(app: &Application, ws: &Workspaces) -> Box {
+fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
         .hexpand(true)
         .hexpand_set(true)
         .homogeneous(false)
-        .spacing(12)
+        .spacing(4)
         .css_name("main-box")
         .build();
 
@@ -149,7 +152,7 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     let status_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .hexpand(false)
-        .spacing(6)
+        .spacing(4)
         .build();
 
     let status_reveal_button = ToggleButton::builder()
@@ -165,65 +168,59 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
     let battery_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .css_classes(["status-group"])
+        .css_classes(["status-group", "status-battery"])
         .hexpand(false)
         .valign(Align::Center)
         .spacing(4)
         .build();
 
     let battery_image = status_icon("battery-missing-symbolic");
-    let battery_label = metric_label("battery-label", 5);
+    let battery_label = metric_label("battery-label");
 
     let mem_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .css_classes(["status-group"])
+        .css_classes(["status-group", "status-memory"])
         .hexpand(false)
         .valign(Align::Center)
         .spacing(4)
         .build();
 
     let mem_icon = status_icon("drive-harddisk-symbolic");
-    let mem_label = metric_label("mem-label", 5);
-    let mem_detail_label = metric_label("mem-label", 17);
+    let mem_label = metric_label("mem-label");
+    let mem_detail_label = metric_label("mem-label");
     mem_detail_label.set_visible(false);
 
     let cpu_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .css_classes(["status-group"])
+        .css_classes(["status-group", "status-cpu"])
         .hexpand(false)
         .valign(Align::Center)
         .spacing(4)
         .build();
 
     let cpu_image = status_icon("utilities-system-monitor-symbolic");
-    let cpu_label = metric_label("cpu-label", 8);
+    let cpu_label = metric_label("cpu-label");
     cpu_label.set_visible(false);
-    let cpu_load_label = metric_label("cpu-load-label", 5);
+    let cpu_load_label = metric_label("cpu-load-label");
 
     let net_container = Box::builder()
         .orientation(Orientation::Horizontal)
-        .spacing(6)
+        .spacing(4)
         .build();
-    net_container.append(&network_entry(
+    let pending_network = network_entry(
         "Network...",
         "network-wired-symbolic",
         "Checking online network interfaces",
-    ));
+    );
+    pending_network.add_css_class("pending");
+    net_container.append(&pending_network);
 
-    let date_container = Button::builder()
-        .css_name("date-container")
-        .css_classes(["bar-button"])
-        .tooltip_text("Local date and time")
-        .build();
-
-    let date_label = metric_label("date-label", 12);
-    let time_label = metric_label("date-label", 9);
+    let date_label = metric_label("date-label");
+    let time_label = metric_label("date-label");
     let dt = status::get_datetime();
     date_label.set_text(&dt.date);
     time_label.set_text(&dt.time);
-    let clock = Box::new(Orientation::Horizontal, 8);
-    clock.append(&date_label);
-    clock.append(&time_label);
+    let date_container = clock_button(&date_label, &time_label);
 
     cpu_container.append(&cpu_image);
     cpu_container.append(&cpu_load_label);
@@ -237,8 +234,6 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
         battery_container.append(&battery_image);
         battery_container.append(&battery_label);
     }
-
-    date_container.set_child(Some(&clock));
 
     status_container.append(&status_reveal_button);
     status_container.append(&net_container);
@@ -257,27 +252,13 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
     // init the container
     for n in 1..workspaces::WORKSPACE_COUNT + 1 {
-        let workspace_button = Button::builder()
-            .label(format!("{}", n))
-            .css_classes(["bar-button"])
-            .name(format!("{}", n))
-            .visible(true)
-            .focus_on_click(true)
-            .build();
-
-        let nclone = n.clone();
-
-        workspace_button.connect_clicked(move |_| {
-            gio::spawn_blocking(move || {
-                workspaces::switch_workspace(nclone);
-            });
-        });
-        workspace_container.append(&workspace_button);
+        workspace_container.append(&workspace_button(n));
     }
 
     populate_workspace_box(&workspace_container, ws);
 
-    main_container.append(&workspace_container);
+    let workspace_selection = selection::Selection::new(&workspace_container);
+    main_container.append(workspace_selection.widget());
     main_container.append(&spacer);
     main_container.append(&status_container);
     main_container.append(&date_container);
@@ -329,6 +310,11 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
                 battery.level(),
                 &battery.icon,
             );
+            if battery.is_charging() {
+                battery_container.add_css_class("charging");
+            } else {
+                battery_container.remove_css_class("charging");
+            }
             battery_container.set_tooltip_text(Some(&battery.tooltip_text));
         }
 
@@ -378,13 +364,13 @@ fn top_bar(app: &Application, ws: &Workspaces) -> Box {
 
         ControlFlow::Continue
     });
-    workspace_container
+    (workspace_container, workspace_selection)
 }
 
 fn network_entry(text: &str, icon: &str, tooltip: &str) -> Box {
     let entry = Box::builder()
         .orientation(Orientation::Horizontal)
-        .css_classes(["status-group"])
+        .css_classes(["status-group", "status-network"])
         .valign(Align::Center)
         .spacing(4)
         .tooltip_text(tooltip)
@@ -415,11 +401,13 @@ fn update_networks(
     match &snapshot {
         Ok(networks) => {
             for network in networks {
-                container.append(&network_entry(
-                    network.label(),
-                    network.icon_name(),
-                    &network.tooltip(),
-                ));
+                let entry = network_entry(network.label(), network.icon_name(), &network.tooltip());
+                entry.add_css_class(match network.kind {
+                    network::Kind::Wired => "wired",
+                    network::Kind::Wireless => "wireless",
+                    network::Kind::Offline => "offline",
+                });
+                container.append(&entry);
             }
         }
         Err(error) => {
@@ -432,16 +420,55 @@ fn update_networks(
     *previous = Some(snapshot);
 }
 
-fn metric_label(css_name: &str, width: i32) -> Label {
+fn workspace_button(tag: usize) -> Button {
+    let button = Button::builder()
+        .label(tag.to_string())
+        .css_classes(["bar-button", "workspace-button"])
+        .name(tag.to_string())
+        .valign(Align::Fill)
+        .visible(true)
+        .focus_on_click(true)
+        .build();
+    button.connect_clicked(move |_| {
+        gio::spawn_blocking(move || {
+            workspaces::switch_workspace(tag);
+        });
+    });
+    button
+}
+
+fn clock_button(date: &Label, time: &Label) -> Button {
+    date.set_xalign(1.0);
+    time.set_xalign(1.0);
+    let clock = Box::builder()
+        .orientation(Orientation::Vertical)
+        .valign(Align::Center)
+        .spacing(0)
+        .build();
+    clock.append(date);
+    clock.append(time);
+    let contents = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(4)
+        .build();
+    contents.append(&status_icon("x-office-calendar-symbolic"));
+    contents.append(&clock);
+    Button::builder()
+        .css_name("date-container")
+        .css_classes(["bar-button"])
+        .tooltip_text("Local date and time")
+        .child(&contents)
+        .build()
+}
+
+fn metric_label(css_name: &str) -> Label {
     let label = Label::builder()
         .css_name(css_name)
         .css_classes(["numeric"])
         .label("--")
-        .width_chars(width)
-        .max_width_chars(width)
         .ellipsize(pango::EllipsizeMode::End)
         .single_line_mode(true)
-        .xalign(1.0)
+        .xalign(0.0)
         .build();
     let attributes = pango::AttrList::new();
     attributes.insert(pango::AttrFontFeatures::new("tnum=1"));
@@ -509,6 +536,7 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
         // make sure each workspace button has only one active class at a time
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
+            workspace.set_tooltip_text(Some(&workspace_info.tooltip()));
             if workspace_info.active && workspace_info.windows.is_empty() {
                 workspace.remove_css_class("occupied");
                 workspace.remove_css_class("active");
@@ -524,12 +552,13 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
             }
         } else {
             workspace.set_visible(false);
+            workspace.set_tooltip_text(None);
         }
         ws_opt = workspace.next_sibling();
     }
 }
 
-fn bottom_bar(app: &Application, ws: &Workspaces) -> Box {
+fn bottom_bar(app: &Application, ws: &Workspaces) -> tasks::Tasks {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
@@ -539,17 +568,8 @@ fn bottom_bar(app: &Application, ws: &Workspaces) -> Box {
         .css_name("main-box")
         .build();
 
-    let workspace_windows_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .hexpand(true)
-        .vexpand(true)
-        .homogeneous(false)
-        .spacing(12)
-        .css_name("workspace-windows-container")
-        .build();
-
-    populate_windows_container(&workspace_windows_container, ws);
-    let tasks = task_scroller(&workspace_windows_container);
+    let workspace_windows_container = tasks::Tasks::new(ws);
+    let tasks = task_scroller(workspace_windows_container.widget());
     main_container.append(&tasks);
     let window = ApplicationWindow::builder()
         .css_name("bottom-bar")
@@ -571,101 +591,6 @@ fn bottom_bar(app: &Application, ws: &Workspaces) -> Box {
     workspace_windows_container
 }
 
-fn populate_windows_container(container: &Box, workspaces: &Workspaces) {
-    let mut sorted: Vec<(&usize, &Workspace)> = workspaces.iter().collect();
-
-    // sort by recently used
-    sorted.sort_by(|w1, w2| w1.1.order.cmp(&w2.1.order));
-
-    let mut tag_opt = container.first_child();
-
-    while let Some(tag) = tag_opt {
-        // empty container with everything
-        container.remove(&tag);
-        tag_opt = container.first_child()
-    }
-
-    // start filling with occupied workspaces
-    for (tag, workspace) in sorted {
-        // Box will contain
-        //  - label of tag
-        //  - button for each window
-        //      - child is box has icon
-        //          - Initial_title of application
-
-        let workspace_windows_css = if workspace.active && !workspace.windows.is_empty() {
-            "workspace-window-box-active"
-        } else if workspace.windows.is_empty() {
-            "workspace-window-box-empty"
-        } else {
-            "workspace-window-box"
-        };
-
-        let workspace_box = Box::builder()
-            .name(format!("{}", tag))
-            .css_name(workspace_windows_css)
-            .vexpand(true)
-            .spacing(4)
-            .build();
-
-        let tag_label = Label::builder()
-            .label(format!("{}", tag))
-            .css_name("tag-label")
-            .build();
-
-        workspace_box.append(&tag_label);
-
-        if workspace.windows.is_empty() {
-            let window_button = Button::builder()
-                .css_name("window-box-empty")
-                .css_classes(["bar-button"])
-                .label("󰟢")
-                .build();
-
-            workspace_box.append(&window_button);
-        }
-
-        for window in &workspace.windows {
-            // creating box to be child of button
-            // check if active or not
-            let css_name = if window.order == 0 && workspace.order == 0 {
-                "active-window-box".to_owned()
-            } else {
-                "window-box".to_owned()
-            };
-
-            let window_button = Button::builder()
-                .css_name(&css_name)
-                .css_classes(["bar-button"])
-                .tooltip_text(&format!("{}", window.info))
-                .build();
-
-            // box has icon then label
-            let icon_label_box = Box::builder().spacing(6).build();
-
-            let icon = Image::builder()
-                .file(&format!("assets/apps/{}.svg", window.class))
-                .css_name("icon-image")
-                .pixel_size(18)
-                .build();
-
-            icon_label_box.append(&icon);
-
-            window_button.set_child(Some(&icon_label_box));
-            let address = window.address.clone();
-            // switch to clicked workspace
-            window_button.connect_clicked(move |_| workspaces::switch_window(&address));
-
-            let window_label = task_label(&window.name);
-
-            icon_label_box.append(&window_label);
-
-            workspace_box.append(&window_button);
-        }
-        container.append(&workspace_box);
-    }
-}
-
 fn task_label(title: &str) -> Label {
     Label::builder()
         .label(title)
@@ -676,7 +601,7 @@ fn task_label(title: &str) -> Label {
         .build()
 }
 
-fn task_scroller(container: &Box) -> gtk::ScrolledWindow {
+fn task_scroller(container: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     let tasks = gtk::ScrolledWindow::builder()
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::External)
@@ -714,6 +639,68 @@ fn has_battery() -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspaces::Workspace;
+
+    fn assert_color(widget: &impl IsA<gtk::Widget>, expected: &str) {
+        let widget: &gtk::Widget = widget.as_ref();
+        assert_eq!(
+            widget.color(),
+            gtk::gdk::RGBA::parse(expected).unwrap(),
+            "unexpected color for {:?}",
+            widget.css_classes()
+        );
+    }
+
+    // GTK 4.16 exposes CSS background rendering through StyleContext.
+    #[allow(deprecated)]
+    fn assert_tooltip_styles() {
+        let settings = gtk::Settings::default().unwrap();
+        let original = settings.property::<bool>("gtk-application-prefer-dark-theme");
+        let luminance = |color: gtk::gdk::RGBA| {
+            let channels = [color.red(), color.green(), color.blue()].map(|value| {
+                let value = f64::from(value);
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+        };
+        for dark in [false, true] {
+            settings.set_property("gtk-application-prefer-dark-theme", dark);
+            let text = Label::new(Some("Window <debug> & title"));
+            let contents = Box::new(Orientation::Horizontal, 0);
+            contents.append(&text);
+            let tooltip = gtk::Window::builder()
+                .css_name("tooltip")
+                .css_classes(["background"])
+                .child(&contents)
+                .build();
+            assert_color(&text, "#38231e");
+            let snapshot = gtk::Snapshot::new();
+            snapshot.render_background(&tooltip.style_context(), 0.0, 0.0, 160.0, 80.0);
+            let node = snapshot.to_node().expect("tooltip must paint a background");
+            let mut surface =
+                gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 160, 80).unwrap();
+            {
+                let context = gtk::cairo::Context::new(&surface).unwrap();
+                node.draw(&context);
+            }
+            let offset = 40 * surface.stride() as usize + 80 * 4;
+            let data = surface.data().unwrap();
+            let background = u32::from_ne_bytes(data[offset..offset + 4].try_into().unwrap());
+            assert_eq!(
+                background, 0xfffffaf7,
+                "tooltip background depends on GTK dark preference: {dark}"
+            );
+            let contrast = (luminance(gtk::gdk::RGBA::parse("#fffaf7").unwrap()) + 0.05)
+                / (luminance(text.color()) + 0.05);
+            assert!(contrast >= 7.0, "tooltip contrast is only {contrast:.1}:1");
+            tooltip.destroy();
+        }
+        settings.set_property("gtk-application-prefer-dark-theme", original);
+    }
 
     pub(crate) fn assert_refined_widgets() {
         let icons = gtk::IconTheme::for_display(&Display::default().unwrap());
@@ -721,6 +708,7 @@ mod tests {
             "utilities-system-monitor-symbolic",
             "drive-harddisk-symbolic",
             "view-more-symbolic",
+            "x-office-calendar-symbolic",
             "network-wired-symbolic",
             "network-wireless-symbolic",
             "network-offline-symbolic",
@@ -739,18 +727,14 @@ mod tests {
             assert!(icons.has_icon(name), "missing symbolic icon: {name}");
         }
 
-        for (name, width, values) in [
-            ("cpu-load-label", 5, vec!["1%", "99%", "100%"]),
-            ("cpu-label", 8, vec!["999 MHz", "5.2 GHz", "12.0 GHz"]),
-            ("mem-label", 17, vec!["1.0/8.0 GiB", "128.0/128.0 GiB"]),
-            (
-                "date-label",
-                12,
-                vec!["2026/01/11", "2026/10/20", "2026/12/31"],
-            ),
-            ("date-label", 9, vec!["01:11:11", "23:59:59"]),
+        for (name, values) in [
+            ("cpu-load-label", vec!["1%", "99%", "100%"]),
+            ("cpu-label", vec!["999 MHz", "5.2 GHz", "12.0 GHz"]),
+            ("mem-label", vec!["1.0/8.0 GiB", "128.0/128.0 GiB"]),
+            ("date-label", vec!["2026/01/11", "2026/10/20", "2026/12/31"]),
+            ("date-label", vec!["01:11:11", "23:59:59"]),
         ] {
-            let label = metric_label(name, width);
+            let label = metric_label(name);
             let mut previous = None;
             for value in values {
                 label.set_text(value);
@@ -761,7 +745,17 @@ mod tests {
                     !label.layout().is_ellipsized(),
                     "metric was clipped: {value}"
                 );
-                if let Some(previous) = previous {
+                assert_eq!(
+                    natural,
+                    label.layout().pixel_size().0,
+                    "metric has unused character slots: {value}"
+                );
+                assert_eq!(
+                    label.layout_offsets().0,
+                    0,
+                    "value is separated from its icon"
+                );
+                if let Some(previous) = previous.filter(|_| name == "date-label") {
                     assert_eq!(natural, previous, "metric width changed for {value}");
                 }
                 previous = Some(natural);
@@ -782,13 +776,23 @@ mod tests {
         ];
         let area = Box::new(Orientation::Horizontal, 6);
         let mut previous = None;
+        let pending = network_entry("Network...", "network-wired-symbolic", "Checking");
+        pending.add_css_class("pending");
+        assert_color(&pending.first_child().unwrap(), "#64748b");
+        assert_color(&pending.last_child().unwrap(), "#634034");
         update_networks(&area, &mut previous, Ok(networks.clone()));
         let first = area.first_child().unwrap();
         assert!(
             first.next_sibling().is_some(),
             "both active devices must be visible"
         );
-        update_networks(&area, &mut previous, Ok(networks));
+        assert_color(&first.first_child().unwrap(), "#0891b2");
+        assert_color(
+            &first.next_sibling().unwrap().first_child().unwrap(),
+            "#16a34a",
+        );
+        assert_color(&first.last_child().unwrap(), "#634034");
+        update_networks(&area, &mut previous, Ok(networks.clone()));
         assert_eq!(
             area.first_child().as_ref(),
             Some(&first),
@@ -809,15 +813,24 @@ mod tests {
             offline.next_sibling().is_none(),
             "disconnected devices must disappear"
         );
+        assert_color(&offline.first_child().unwrap(), "#64748b");
+        assert_color(&offline.last_child().unwrap(), "#634034");
         update_networks(&area, &mut previous, Err("Network fixture error".into()));
-        assert!(area.first_child().unwrap().has_css_class("warning"));
+        let error = area.first_child().unwrap();
+        assert!(error.has_css_class("warning"));
+        assert_color(&error.first_child().unwrap(), "#b45309");
+        assert_color(&error.last_child().unwrap(), "#703900");
+        update_networks(&area, &mut previous, Ok(networks));
+        assert_color(
+            &area.first_child().unwrap().first_child().unwrap(),
+            "#0891b2",
+        );
 
         let workspaces = Box::new(Orientation::Horizontal, 4);
         for tag in 1..=2 {
-            workspaces.append(&Button::builder().name(tag.to_string()).build());
+            workspaces.append(&workspace_button(tag));
         }
-        let windows = Box::new(Orientation::Horizontal, 12);
-        let state = Workspaces::from([(
+        let mut state = Workspaces::from([(
             1,
             Workspace {
                 windows: vec![workspaces::Window {
@@ -833,11 +846,93 @@ mod tests {
                 active: true,
             },
         )]);
+        let windows = tasks::Tasks::new(&state);
         populate_workspace_box(&workspaces, &state);
-        populate_windows_container(&windows, &state);
+        let first_workspace = workspaces.first_child().unwrap();
+        assert_eq!(
+            first_workspace.tooltip_text().as_deref(),
+            Some("Workspace 1\n- Window fixture")
+        );
         assert!(workspaces.first_child().unwrap().has_css_class("active"));
         assert!(!workspaces.last_child().unwrap().is_visible());
-        assert_eq!(windows.first_child().unwrap().widget_name(), "1");
+        assert_eq!(windows.widget().first_child().unwrap().widget_name(), "1");
+        let bottom = Box::builder().css_name("bottom-bar").build();
+        bottom.append(windows.widget());
+        let top_label = workspaces
+            .first_child()
+            .unwrap()
+            .downcast::<Button>()
+            .unwrap()
+            .child()
+            .unwrap()
+            .downcast::<Label>()
+            .unwrap();
+        let tag = windows
+            .widget()
+            .first_child()
+            .unwrap()
+            .downcast::<Label>()
+            .unwrap();
+        let task = tag.next_sibling().unwrap().downcast::<Button>().unwrap();
+        let task_contents = task.child().unwrap().downcast::<Box>().unwrap();
+        let title = task_contents
+            .last_child()
+            .unwrap()
+            .downcast::<Label>()
+            .unwrap();
+        let font_size = |label: &Label| label.pango_context().font_description().unwrap().size();
+        assert!(font_size(&top_label) > 0);
+        for label in [&tag, &title] {
+            assert_eq!(
+                font_size(label),
+                font_size(&top_label),
+                "bottom font differs from top"
+            );
+        }
+        state.get_mut(&1).unwrap().windows[0].info = "Updated <b>title</b> & details".into();
+        state.get_mut(&1).unwrap().windows.push(workspaces::Window {
+            name: "Firefox".into(),
+            info: "Second window".into(),
+            address: "def".into(),
+            class: "firefox".into(),
+            tag: 1,
+            order: 1,
+        });
+        populate_workspace_box(&workspaces, &state);
+        windows.update(&state);
+        assert_eq!(
+            first_workspace.tooltip_text().as_deref(),
+            Some("Workspace 1\n- Updated <b>title</b> & details\n- Second window")
+        );
+        assert_eq!(
+            first_workspace.tooltip_markup().as_deref(),
+            Some("Workspace 1\n- Updated &lt;b&gt;title&lt;/b&gt; &amp; details\n- Second window"),
+            "window titles must not be interpreted as markup"
+        );
+        assert_eq!(
+            task.tooltip_text().as_deref(),
+            Some("Updated <b>title</b> & details")
+        );
+        let mut moved = state.get_mut(&1).unwrap().windows.remove(0);
+        moved.tag = 2;
+        state.insert(
+            2,
+            Workspace {
+                windows: vec![moved],
+                tag: 2,
+                order: 1,
+                active: false,
+            },
+        );
+        populate_workspace_box(&workspaces, &state);
+        assert_eq!(
+            first_workspace.tooltip_text().as_deref(),
+            Some("Workspace 1\n- Second window")
+        );
+        assert_eq!(
+            workspaces.last_child().unwrap().tooltip_text().as_deref(),
+            Some("Workspace 2\n- Updated <b>title</b> & details")
+        );
         let empty = Workspaces::from([(
             2,
             Workspace {
@@ -848,44 +943,108 @@ mod tests {
             },
         )]);
         populate_workspace_box(&workspaces, &empty);
-        populate_windows_container(&windows, &empty);
+        windows.update(&empty);
         assert!(!workspaces.first_child().unwrap().is_visible());
+        assert_eq!(first_workspace.tooltip_text(), None);
         assert!(workspaces
             .last_child()
             .unwrap()
             .has_css_class("empty-active"));
-        assert_eq!(windows.first_child().unwrap().widget_name(), "2");
+        assert_eq!(windows.widget().first_child().unwrap().widget_name(), "2");
+        assert_eq!(
+            workspaces.last_child().unwrap().tooltip_text().as_deref(),
+            Some("Workspace 2\nNo open windows")
+        );
 
-        let cpu = metric_label("cpu-label", 8);
-        let memory = metric_label("mem-label", 5);
-        let detail = metric_label("mem-label", 17);
+        let cpu = metric_label("cpu-label");
+        let memory = metric_label("mem-label");
+        let detail = metric_label("mem-label");
         cpu.set_visible(false);
         detail.set_visible(false);
-        let toggle = ToggleButton::new();
+        let toggle = ToggleButton::builder()
+            .css_name("status-reveal-button")
+            .css_classes(["bar-button"])
+            .icon_name("view-more-symbolic")
+            .build();
+        let more_icon = toggle.child().unwrap();
+        assert_color(&more_icon, "#c2410c");
         connect_status_toggle(&toggle, &cpu, &memory, &detail);
         toggle.set_active(true);
         assert!(cpu.is_visible() && detail.is_visible() && !memory.is_visible());
+        assert_color(&more_icon, "#c2410c");
         toggle.set_active(false);
         assert!(!cpu.is_visible() && !detail.is_visible() && memory.is_visible());
+        assert_color(&more_icon, "#c2410c");
 
-        let group = Box::builder().css_classes(["status-group"]).build();
-        let icon = status_icon("drive-harddisk-symbolic");
-        group.append(&icon);
-        group.append(&memory);
-        let (_, normal_width, _, _) = group.measure(Orientation::Horizontal, -1);
-        for (level, class, name) in [
-            (StatusLevel::Warning, "warning", "dialog-warning-symbolic"),
-            (StatusLevel::Critical, "critical", "dialog-error-symbolic"),
-            (StatusLevel::Normal, "", "drive-harddisk-symbolic"),
+        for (category, normal_icon, normal_color) in [
+            ("status-cpu", "utilities-system-monitor-symbolic", "#2563eb"),
+            ("status-memory", "drive-harddisk-symbolic", "#9333ea"),
+            ("status-battery", "battery-good-symbolic", "#15803d"),
         ] {
-            update_status(&group, &icon, level, "drive-harddisk-symbolic");
-            assert_eq!(icon.icon_name().as_deref(), Some(name));
-            assert_eq!(group.has_css_class("warning"), class == "warning");
-            assert_eq!(group.has_css_class("critical"), class == "critical");
-            let (_, width, _, _) = group.measure(Orientation::Horizontal, -1);
-            assert_eq!(width, normal_width, "alert state changed group width");
-            let (_, height, _, _) = group.measure(Orientation::Vertical, -1);
-            assert!(height <= 35, "status group is too tall: {height}px");
+            let group = Box::builder()
+                .css_classes(["status-group", category])
+                .build();
+            let icon = status_icon(normal_icon);
+            let value = metric_label("mem-label");
+            group.append(&icon);
+            group.append(&value);
+            let (_, normal_width, _, _) = group.measure(Orientation::Horizontal, -1);
+            for (level, class, name, icon_color, text_color) in [
+                (
+                    StatusLevel::Normal,
+                    "",
+                    normal_icon,
+                    normal_color,
+                    "#634034",
+                ),
+                (
+                    StatusLevel::Warning,
+                    "warning",
+                    "dialog-warning-symbolic",
+                    "#b45309",
+                    "#703900",
+                ),
+                (
+                    StatusLevel::Critical,
+                    "critical",
+                    "dialog-error-symbolic",
+                    "#dc2626",
+                    "#8c1612",
+                ),
+                (
+                    StatusLevel::Normal,
+                    "",
+                    normal_icon,
+                    normal_color,
+                    "#634034",
+                ),
+            ] {
+                update_status(&group, &icon, level, normal_icon);
+                assert_eq!(icon.icon_name().as_deref(), Some(name));
+                assert_eq!(group.has_css_class("warning"), class == "warning");
+                assert_eq!(group.has_css_class("critical"), class == "critical");
+                assert_color(&icon, icon_color);
+                assert_color(&value, text_color);
+                let (_, width, _, _) = group.measure(Orientation::Horizontal, -1);
+                assert_eq!(width, normal_width, "alert state changed group width");
+                let (_, height, _, _) = group.measure(Orientation::Vertical, -1);
+                assert!(height <= 35, "status group is too tall: {height}px");
+            }
+            if category == "status-battery" {
+                group.add_css_class("charging");
+                assert_color(&icon, "#0d9488");
+                for (level, color) in [
+                    (StatusLevel::Warning, "#b45309"),
+                    (StatusLevel::Critical, "#dc2626"),
+                    (StatusLevel::Normal, "#0d9488"),
+                ] {
+                    update_status(&group, &icon, level, "battery-good-charging-symbolic");
+                    assert_color(&icon, color);
+                }
+                group.remove_css_class("charging");
+                update_status(&group, &icon, StatusLevel::Normal, normal_icon);
+                assert_color(&icon, normal_color);
+            }
         }
 
         let title = task_label(&"A very long window title ".repeat(20));
@@ -914,17 +1073,120 @@ mod tests {
         adjustment.configure(0.0, 0.0, 300.0, 1.0, 100.0, 300.0);
         assert!(!scroll.emit_by_name::<bool>("scroll", &[&0.0f64, &1.0f64]));
 
-        for (name, expected) in [("top-bar", 36..=38), ("bottom-bar", 38..=40)] {
+        let date = metric_label("date-label");
+        let time = metric_label("date-label");
+        date.set_text("2026/10/20");
+        time.set_text("23:59:59");
+        let clock = clock_button(&date, &time);
+        let clock_contents = clock.child().unwrap().downcast::<Box>().unwrap();
+        let calendar = clock_contents
+            .first_child()
+            .unwrap()
+            .downcast::<Image>()
+            .unwrap();
+        assert_eq!(
+            calendar.icon_name().as_deref(),
+            Some("x-office-calendar-symbolic")
+        );
+        assert_color(&calendar, "#db2777");
+        assert_color(&date, "#38231e");
+        assert_color(&time, "#38231e");
+        let rows = clock_contents
+            .last_child()
+            .unwrap()
+            .downcast::<Box>()
+            .unwrap();
+        assert_eq!(rows.orientation(), Orientation::Vertical);
+        assert_eq!(rows.spacing(), 0);
+        assert_eq!(rows.first_child().as_ref(), Some(date.upcast_ref()));
+        assert_eq!(rows.last_child().as_ref(), Some(time.upcast_ref()));
+
+        let ram = metric_label("mem-label");
+        ram.set_text("26.9/125.1 GiB");
+        let memory_group = Box::builder()
+            .css_classes(["status-group"])
+            .spacing(4)
+            .valign(Align::Center)
+            .build();
+        memory_group.append(&status_icon("drive-harddisk-symbolic"));
+        memory_group.append(&ram);
+        let square_buttons = Box::new(Orientation::Horizontal, 4);
+        for (tag, class) in [(1, "active"), (2, "occupied"), (9, "empty-active")] {
+            let button = workspace_button(tag);
+            button.add_css_class(class);
+            square_buttons.append(&button);
+        }
+
+        for (name, expected) in [("top-bar", 48..=50), ("bottom-bar", 38..=40)] {
             let panel = Box::builder().css_name(name).build();
-            let row = Box::builder().css_name("main-box").build();
+            let row = Box::builder()
+                .css_name("main-box")
+                .orientation(Orientation::Horizontal)
+                .spacing(4)
+                .build();
             let button = Button::builder()
                 .css_classes(["bar-button"])
                 .label("Workspace")
                 .build();
-            row.append(&button);
+            if name == "top-bar" {
+                row.append(&square_buttons);
+                row.append(&memory_group);
+                row.append(&clock);
+            } else {
+                row.append(&button);
+            }
             panel.append(&row);
-            let (_, height, _, _) = panel.measure(Orientation::Vertical, -1);
+            let (_, width, _, _) = panel.measure(Orientation::Horizontal, -1);
+            let (_, height, _, _) = panel.measure(Orientation::Vertical, width);
             assert!(expected.contains(&height), "{name} height is {height}px");
+            panel.allocate(width, height, -1, None);
+            if name == "top-bar" {
+                let mut child = square_buttons.first_child();
+                while let Some(button) = child {
+                    let bounds = button.compute_bounds(&square_buttons).unwrap();
+                    assert_eq!(bounds.width(), 47.0, "workspace button width");
+                    assert_eq!(bounds.height(), 47.0, "workspace button is not square");
+                    let panel_bounds = button.compute_bounds(&panel).unwrap();
+                    assert_eq!(panel_bounds.y(), 0.0, "highlight has a top inset");
+                    assert_eq!(
+                        panel_bounds.height(),
+                        height as f32 - 1.0,
+                        "highlight has a bottom inset beyond the separator"
+                    );
+                    if button == square_buttons.first_child().unwrap() {
+                        assert_eq!(panel_bounds.x(), 0.0, "highlight has a left inset");
+                    }
+                    child = button.next_sibling();
+                }
+                let ram_bounds = ram.compute_bounds(&row).unwrap();
+                let calendar_bounds = calendar.compute_bounds(&row).unwrap();
+                let ram_right = ram_bounds.x()
+                    + ram.layout_offsets().0 as f32
+                    + ram.layout().pixel_size().0 as f32;
+                let gap = calendar_bounds.x() - ram_right;
+                assert!(
+                    (8.0..=16.0).contains(&gap),
+                    "RAM-to-calendar gap is {gap}px"
+                );
+                let ram_icon = memory_group.first_child().unwrap();
+                let icon_bounds = ram_icon.compute_bounds(&row).unwrap();
+                let icon_gap = ram_bounds.x() + ram.layout_offsets().0 as f32
+                    - (icon_bounds.x() + icon_bounds.width());
+                assert_eq!(icon_gap, 4.0, "RAM icon/value gap is too large");
+                for label in [&date, &time] {
+                    assert!(!label.layout().is_ellipsized(), "clock text was clipped");
+                    let (_, text_height) = label.layout().pixel_size();
+                    assert!(label.height() >= text_height, "clock row was too short");
+                }
+                assert!(
+                    time.compute_bounds(&rows).unwrap().y()
+                        >= date.compute_bounds(&rows).unwrap().y() + date.height() as f32,
+                    "clock rows overlap"
+                );
+            }
         }
+        crate::selection::assert_widgets();
+        crate::tasks::assert_widgets();
+        assert_tooltip_styles();
     }
 }

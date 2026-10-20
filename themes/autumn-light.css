@@ -20,11 +20,26 @@ button, label, box {
     color: @autumn_foreground;
 }
 
+tooltip.background {
+    background-color: @autumn_background;
+    background-image: none;
+    color: @autumn_foreground;
+    border: 1px solid @autumn_border;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+tooltip label {
+    color: @autumn_foreground;
+    font-size: 16px;
+}
+
 top-bar, bottom-bar {
     padding: 0 8px;
 }
 
 top-bar {
+    padding-left: 0;
     border-bottom: 1px solid @autumn_border;
 }
 
@@ -33,7 +48,7 @@ bottom-bar {
 }
 
 top-bar main-box {
-    min-height: 35px;
+    min-height: 47px;
 }
 
 bottom-bar main-box {
@@ -51,7 +66,7 @@ bottom-bar main-box {
     background-color: transparent;
     background-image: none;
     box-shadow: none;
-    font-size: 15px;
+    font-size: 16px;
     transition: background-color 100ms ease;
 }
 
@@ -85,7 +100,7 @@ bottom-bar main-box {
     font-weight: 500;
 }
 
-.active label, .empty-active label, active-window-box window-label {
+.active label, window-box.active window-label, .empty-active label, active-window-box window-label {
     color: @autumn_accent;
     font-weight: 500;
 }
@@ -95,8 +110,21 @@ bottom-bar main-box {
     box-shadow: none;
 }
 
-.numeric, window-label, net-label {
-    font-size: 15px;
+.animated-workspaces .bar-button.active,
+.animated-workspaces .bar-button.empty-active {
+    background-color: transparent;
+    border-bottom-color: transparent;
+}
+
+.numeric, window-label, net-label, bottom-bar label, .bar-button label {
+    font-size: 16px;
+}
+
+.workspace-button {
+    min-width: 47px;
+    min-height: 45px;
+    padding: 0;
+    border-radius: 0;
 }
 
 .numeric {
@@ -109,8 +137,12 @@ date-label {
     font-weight: 500;
 }
 
+date-container.bar-button {
+    padding: 2px 6px;
+}
+
 .status-group {
-    padding: 4px;
+    padding: 3px;
     border-radius: 4px;
 }
 
@@ -134,6 +166,52 @@ date-label {
     color: @autumn_accent;
 }
 
+/* Colorful status icons, independent of the surrounding text palette. */
+.status-cpu .status-icon {
+    color: #2563eb;
+}
+
+.status-memory .status-icon {
+    color: #9333ea;
+}
+
+.status-network .status-icon {
+    color: #0891b2;
+}
+
+.status-network.wireless .status-icon {
+    color: #16a34a;
+}
+
+.status-network.offline .status-icon,
+.status-network.pending .status-icon {
+    color: #64748b;
+}
+
+.status-battery .status-icon {
+    color: #15803d;
+}
+
+.status-battery.charging .status-icon {
+    color: #0d9488;
+}
+
+date-container .status-icon {
+    color: #db2777;
+}
+
+status-reveal-button image {
+    color: #c2410c;
+}
+
+.status-group.warning .status-icon {
+    color: #b45309;
+}
+
+.status-group.critical .status-icon {
+    color: #dc2626;
+}
+
 icon-image {
     padding: 0;
     margin: 0;
@@ -142,7 +220,7 @@ icon-image {
 
 tag-label {
     padding: 0 4px;
-    font-size: 14px;
+    font-size: 16px;
     color: @autumn_secondary;
 }
 

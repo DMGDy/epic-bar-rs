@@ -72,6 +72,25 @@ pub struct Workspace {
     pub active: bool,
 }
 
+impl Workspace {
+    pub fn tooltip(&self) -> String {
+        let mut text = format!("Workspace {}", self.tag);
+        if self.windows.is_empty() {
+            text.push_str("\nNo open windows");
+        }
+        for window in &self.windows {
+            let title = [&window.info, &window.name, &window.class]
+                .into_iter()
+                .map(|value| value.trim())
+                .find(|value| !value.is_empty())
+                .unwrap_or("Untitled window");
+            text.push_str("\n- ");
+            text.push_str(title);
+        }
+        text
+    }
+}
+
 pub type Workspaces = BTreeMap<usize, Workspace>;
 
 fn get_hyprland_sock(num: Option<&str>) -> io::Result<UnixStream> {
@@ -302,6 +321,40 @@ pub fn get_workspaces() -> Result<Workspaces, String> {
 mod tests {
     use super::*;
     use std::net::Shutdown;
+
+    #[test]
+    fn workspace_tooltips_list_current_titles_and_handle_untitled_windows() {
+        let mut workspace = Workspace {
+            windows: Vec::new(),
+            tag: 3,
+            order: 0,
+            active: true,
+        };
+        assert_eq!(workspace.tooltip(), "Workspace 3\nNo open windows");
+        workspace.windows = parse_windows(
+            r#"[
+            {"address":"0xa","title":"Build <debug> & run","class":"kitty",
+             "initialTitle":"Kitty","focusHistoryID":0,"workspace":{"id":3}},
+            {"address":"0xb","title":"  ","class":"kitty",
+             "initialTitle":"Kitty","focusHistoryID":1,"workspace":{"id":3}},
+            {"address":"0xc","title":"","class":"org.editor",
+             "initialTitle":"","focusHistoryID":2,"workspace":{"id":3}},
+            {"address":"0xd","title":"","class":"",
+             "initialTitle":"","focusHistoryID":3,"workspace":{"id":3}}
+        ]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            workspace.tooltip(),
+            "Workspace 3\n- Build <debug> & run\n- Kitty\n- org.editor\n- Untitled window"
+        );
+        workspace.windows[0].info = "Updated title".into();
+        workspace.windows.reverse();
+        assert_eq!(
+            workspace.tooltip(),
+            "Workspace 3\n- Untitled window\n- org.editor\n- Kitty\n- Updated title"
+        );
+    }
 
     #[test]
     fn json_clients_preserve_titles_and_handle_unfocused_or_special_windows() {
