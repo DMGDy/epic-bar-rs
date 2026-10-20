@@ -23,6 +23,7 @@ use gtk::{
 
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
+mod network;
 mod status;
 mod theme;
 mod workspaces;
@@ -30,6 +31,7 @@ mod workspaces;
 use crate::status::{Cpu, StatusLevel};
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
+type NetworkSnapshot = Result<Vec<network::Network>, String>;
 // This cannot keep going
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -134,13 +136,30 @@ fn top_bar(app: &Application) {
     cpu_label.set_visible(false);
     let cpu_load_label = metric_label("cpu-load-label", 5);
 
+    let net_container = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    net_container.append(&network_entry(
+        "Network...",
+        "network-wired-symbolic",
+        "Checking online network interfaces",
+    ));
+
     let date_container = Button::builder()
         .css_name("date-container")
         .css_classes(["bar-button"])
+        .tooltip_text("Local date and time")
         .build();
 
-    let date_label = metric_label("date-label", 8);
-    date_label.set_text("00:00:00");
+    let date_label = metric_label("date-label", 12);
+    let time_label = metric_label("date-label", 9);
+    let dt = status::get_datetime();
+    date_label.set_text(&dt.date);
+    time_label.set_text(&dt.time);
+    let clock = Box::new(Orientation::Horizontal, 8);
+    clock.append(&date_label);
+    clock.append(&time_label);
 
     cpu_container.append(&cpu_image);
     cpu_container.append(&cpu_load_label);
@@ -155,9 +174,10 @@ fn top_bar(app: &Application) {
         battery_container.append(&battery_label);
     }
 
-    date_container.set_child(Some(&date_label));
+    date_container.set_child(Some(&clock));
 
     status_container.append(&status_reveal_button);
+    status_container.append(&net_container);
     status_container.append(&cpu_container);
     status_container.append(&mem_container);
     if has {
@@ -242,6 +262,19 @@ fn top_bar(app: &Application) {
     let cpu = status::Cpu::new();
     let mut cpu = cpu.clone();
 
+    let (net_tx, net_rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut reader = network::Reader::default();
+        loop {
+            let snapshot = reader.read().map_err(|error| error.to_string());
+            if net_tx.send(snapshot).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+    let mut previous_networks = None;
+
     // update other stuff less frequently
     glib::source::timeout_add_seconds_local(1, move || {
         if has {
@@ -257,8 +290,18 @@ fn top_bar(app: &Application) {
         }
 
         let dt = status::get_datetime();
-        date_label.set_text(&dt.time);
-        date_container.set_tooltip_text(Some(&dt.date));
+        date_label.set_text(&dt.date);
+        time_label.set_text(&dt.time);
+
+        match net_rx.try_recv() {
+            Ok(networks) => update_networks(&net_container, &mut previous_networks, networks),
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => update_networks(
+                &net_container,
+                &mut previous_networks,
+                Err("Network monitor stopped".to_string()),
+            ),
+        }
 
         let memory = status::get_mem_info();
         mem_label.set_text(&format!("{:.0}%", memory.used_percent));
@@ -286,6 +329,57 @@ fn top_bar(app: &Application) {
 
         ControlFlow::Continue
     });
+}
+
+fn network_entry(text: &str, icon: &str, tooltip: &str) -> Box {
+    let entry = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .css_classes(["status-group"])
+        .valign(Align::Center)
+        .spacing(4)
+        .tooltip_text(tooltip)
+        .build();
+    let label = Label::builder()
+        .css_name("net-label")
+        .label(text)
+        .ellipsize(pango::EllipsizeMode::End)
+        .max_width_chars(16)
+        .single_line_mode(true)
+        .build();
+    entry.append(&status_icon(icon));
+    entry.append(&label);
+    entry
+}
+
+fn update_networks(
+    container: &Box,
+    previous: &mut Option<NetworkSnapshot>,
+    snapshot: NetworkSnapshot,
+) {
+    if previous.as_ref() == Some(&snapshot) {
+        return;
+    }
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+    match &snapshot {
+        Ok(networks) => {
+            for network in networks {
+                container.append(&network_entry(
+                    network.label(),
+                    network.icon_name(),
+                    &network.tooltip(),
+                ));
+            }
+        }
+        Err(error) => {
+            eprintln!("epic-bar-rs: cannot read network devices: {error}");
+            let entry = network_entry("Network error", "dialog-warning-symbolic", error);
+            entry.add_css_class("warning");
+            container.append(&entry);
+        }
+    }
+    *previous = Some(snapshot);
 }
 
 fn metric_label(css_name: &str, width: i32) -> Label {
@@ -596,6 +690,9 @@ mod tests {
             "utilities-system-monitor-symbolic",
             "drive-harddisk-symbolic",
             "view-more-symbolic",
+            "network-wired-symbolic",
+            "network-wireless-symbolic",
+            "network-offline-symbolic",
             "dialog-warning-symbolic",
             "dialog-error-symbolic",
             "battery-missing-symbolic",
@@ -611,13 +708,18 @@ mod tests {
             assert!(icons.has_icon(name), "missing symbolic icon: {name}");
         }
 
-        for (width, values) in [
-            (5, vec!["1%", "99%", "100%"]),
-            (8, vec!["999 MHz", "5.2 GHz", "12.0 GHz"]),
-            (17, vec!["1.0/8.0 GiB", "128.0/128.0 GiB"]),
-            (8, vec!["01:11:11", "23:59:59"]),
+        for (name, width, values) in [
+            ("cpu-load-label", 5, vec!["1%", "99%", "100%"]),
+            ("cpu-label", 8, vec!["999 MHz", "5.2 GHz", "12.0 GHz"]),
+            ("mem-label", 17, vec!["1.0/8.0 GiB", "128.0/128.0 GiB"]),
+            (
+                "date-label",
+                12,
+                vec!["2026/01/11", "2026/10/20", "2026/12/31"],
+            ),
+            ("date-label", 9, vec!["01:11:11", "23:59:59"]),
         ] {
-            let label = metric_label("cpu-load-label", width);
+            let label = metric_label(name, width);
             let mut previous = None;
             for value in values {
                 label.set_text(value);
@@ -634,6 +736,50 @@ mod tests {
                 previous = Some(natural);
             }
         }
+
+        let networks = vec![
+            network::Network {
+                iface: "eth0".into(),
+                kind: network::Kind::Wired,
+                ssid: None,
+            },
+            network::Network {
+                iface: "wlan0".into(),
+                kind: network::Kind::Wireless,
+                ssid: Some("Work WiFi".into()),
+            },
+        ];
+        let area = Box::new(Orientation::Horizontal, 6);
+        let mut previous = None;
+        update_networks(&area, &mut previous, Ok(networks.clone()));
+        let first = area.first_child().unwrap();
+        assert!(
+            first.next_sibling().is_some(),
+            "both active devices must be visible"
+        );
+        update_networks(&area, &mut previous, Ok(networks));
+        assert_eq!(
+            area.first_child().as_ref(),
+            Some(&first),
+            "unchanged devices must retain their widgets"
+        );
+        update_networks(&area, &mut previous, Ok(vec![network::Network::default()]));
+        let offline = area.first_child().unwrap().downcast::<Box>().unwrap();
+        assert_eq!(
+            offline
+                .last_child()
+                .unwrap()
+                .downcast::<Label>()
+                .unwrap()
+                .text(),
+            "Offline"
+        );
+        assert!(
+            offline.next_sibling().is_none(),
+            "disconnected devices must disappear"
+        );
+        update_networks(&area, &mut previous, Err("Network fixture error".into()));
+        assert!(area.first_child().unwrap().has_css_class("warning"));
 
         let cpu = metric_label("cpu-label", 8);
         let memory = metric_label("mem-label", 5);

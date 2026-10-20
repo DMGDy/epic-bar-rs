@@ -51,6 +51,10 @@
       cp themes/*.css $out/share/epic-bar-rs/themes/
     '';
 
+    preFixup = ''
+      gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw ]})
+    '';
+
   };
   in {
     packages.${system}.default = epic-bar;

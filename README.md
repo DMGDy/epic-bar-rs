@@ -63,15 +63,29 @@ its original font stack and refines its spacing, colors, and active indicators.
 
 The `experiment/autumn-status-bars` branch keeps the warm-white background opaque
 and replaces active-item glows with a peach fill and a 2 px red underline.
-The top and bottom bars target 36 px and 38 px respectively, with 14 px text,
+The top and bottom bars target 36 px and 38 px respectively, with 15 px text,
 4 px workspace gaps, 6 px status gaps, 12 px workspace-group gaps, and 18 px icons.
 
-The top bar contains workspaces, compact CPU/memory/battery percentages, and
-the clock. The more button toggles CPU frequency and used/total memory;
-the date and full memory values are also available in tooltips. Numeric labels
+The top bar contains workspaces, active network devices, compact CPU/memory/battery
+percentages, and the visible local date and time (`YYYY/MM/DD HH:MM:SS`).
+The more button toggles CPU frequency and used/total memory;
+full memory values are also available in tooltips. Numeric labels
 reserve their width and use tabular digits to prevent updates shifting the bar.
 System icons are symbolic and follow the palette; application icons retain
 their original colors without individual background tiles.
+
+Network devices follow the feature from `event-driven-updates` (`fadfb6d`,
+`d85b608`): every physical interface with an up link and carrier is shown,
+excluding loopback and virtual/container interfaces. The IPv4 default-route
+device appears first, followed by other devices alphabetically. Wi-Fi shows its
+SSID when available, with the device name in its tooltip; wired links show their
+device names. Labels remain visible in the compact view, and long names are
+ellipsized with full values in tooltips.
+
+Network reads and SSID queries run off the GTK thread. Each wireless interface
+has its own 10-second SSID cache; packaged `iw` queries have a timeout. Unchanged
+device lists retain their widgets. No active links shows `Offline`; enumeration
+failures instead show `Network error` with details in the tooltip and stderr.
 
 Normal metrics use secondary brown. CPU usage warns at 85% and becomes critical
 at 95%; memory usage uses 80%/90%. A discharging battery warns at 20% and becomes

@@ -51,7 +51,7 @@ bottom-bar main-box {
     background-color: transparent;
     background-image: none;
     box-shadow: none;
-    font-size: 14px;
+    font-size: 15px;
     transition: background-color 100ms ease;
 }
 
@@ -95,8 +95,8 @@ bottom-bar main-box {
     box-shadow: none;
 }
 
-.numeric, window-label {
-    font-size: 14px;
+.numeric, window-label, net-label {
+    font-size: 15px;
 }
 
 .numeric {
@@ -142,7 +142,7 @@ icon-image {
 
 tag-label {
     padding: 0 4px;
-    font-size: 13px;
+    font-size: 14px;
     color: @autumn_secondary;
 }
 

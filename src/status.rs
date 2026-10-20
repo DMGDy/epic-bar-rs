@@ -109,9 +109,6 @@ pub struct Cpu {
     pub avg_load:f32
 }
 
-pub mod Network {
-}
-
 impl Cpu {
 
     pub fn new() -> Self {
