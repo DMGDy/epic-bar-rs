@@ -29,14 +29,15 @@ mod theme;
 mod workspaces;
 
 use crate::status::{Cpu, StatusLevel};
+use crate::workspaces::{Workspace, Workspaces};
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 type NetworkSnapshot = Result<Vec<network::Network>, String>;
 // This cannot keep going
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
-    let theme_failed = Rc::new(Cell::new(false));
-    let startup_failed = theme_failed.clone();
+    let initialization_failed = Rc::new(Cell::new(false));
+    let startup_failed = initialization_failed.clone();
     app.connect_startup(move |app| match theme::load() {
         Ok(provider) => init_style(&provider),
         Err(error) => {
@@ -45,22 +46,85 @@ fn main() -> glib::ExitCode {
             app.quit();
         }
     });
-    let activation_failed = theme_failed.clone();
+    let activation_failed = initialization_failed.clone();
     app.connect_activate(move |app| {
         if !activation_failed.get() {
-            top_bar(app);
-            bottom_bar(app);
+            if let Err(error) = build_ui(app) {
+                eprintln!("epic-bar-rs: cannot initialize bars: {error}");
+                activation_failed.set(true);
+                app.quit();
+            }
         }
     });
     let result = app.run();
-    if theme_failed.get() {
+    if initialization_failed.get() {
         glib::ExitCode::FAILURE
     } else {
         result
     }
 }
 
-fn top_bar(app: &Application) {
+fn build_ui(app: &Application) -> Result<(), String> {
+    let state = workspaces::get_workspaces()?;
+    let workspace_container = top_bar(app, &state);
+    let windows_container = bottom_bar(app, &state);
+    let (tx, rx) = async_channel::bounded::<workspaces::HyprEvent>(64);
+
+    thread::spawn(move || {
+        let mut last_error = None;
+        loop {
+            match workspaces::event_socket() {
+                Ok(mut reader) => {
+                    last_error = None;
+                    // Catch changes missed before connecting or while disconnected.
+                    if tx.send_blocking(workspaces::HyprEvent::Workspace).is_err() {
+                        return;
+                    }
+                    while let Some(event) = workspaces::next_event(&mut reader) {
+                        if tx.send_blocking(event).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    if last_error.as_ref() != Some(&message) {
+                        eprintln!("epic-bar-rs: cannot watch Hyprland events: {message}; retrying");
+                        last_error = Some(message);
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    });
+
+    // Both bars use the same snapshot; coalesce event bursts into one refresh.
+    glib::spawn_future_local(async move {
+        while let Ok(_event) = rx.recv().await {
+            for _ in 0..64 {
+                if rx.try_recv().is_err() {
+                    break;
+                }
+            }
+            let state = match workspaces::get_workspaces() {
+                Ok(state) => state,
+                Err(error) => {
+                    eprintln!("epic-bar-rs: cannot refresh bars: {error}");
+                    workspace_container.set_tooltip_text(Some(&error));
+                    windows_container.set_tooltip_text(Some(&error));
+                    continue;
+                }
+            };
+            workspace_container.set_tooltip_text(None);
+            windows_container.set_tooltip_text(None);
+            populate_workspace_box(&workspace_container, &state);
+            populate_windows_container(&windows_container, &state);
+        }
+    });
+    Ok(())
+}
+
+fn top_bar(app: &Application, ws: &Workspaces) -> Box {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
@@ -211,7 +275,7 @@ fn top_bar(app: &Application) {
         workspace_container.append(&workspace_button);
     }
 
-    populate_workspace_box(&workspace_container);
+    populate_workspace_box(&workspace_container, ws);
 
     main_container.append(&workspace_container);
     main_container.append(&spacer);
@@ -236,27 +300,6 @@ fn top_bar(app: &Application) {
 
     window.set_decorated(true);
     window.present();
-
-    let (tx, rx) = mpsc::channel();
-
-    let workspace_clone = workspace_container.clone();
-    // check if workspace activity in different thread to avoid blocking
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(50));
-        if workspaces::is_activity() {
-            tx.send(()).unwrap();
-        }
-    });
-
-    // on main thread check if signal recieved that there is to update
-
-    glib::source::timeout_add_local(Duration::from_millis(50), move || {
-        if let Ok(_) = rx.try_recv() {
-            populate_workspace_box(&workspace_clone);
-        }
-
-        ControlFlow::Continue
-    });
 
     // persisting data to track cpu load over time
     let cpu = status::Cpu::new();
@@ -304,13 +347,19 @@ fn top_bar(app: &Application) {
         }
 
         let memory = status::get_mem_info();
-        mem_label.set_text(&format!("{:.0}%", memory.used_percent));
+        mem_label.set_text(
+            &memory
+                .used_percent
+                .map_or_else(|| "N/A".to_string(), |used| format!("{used:.0}%")),
+        );
         mem_detail_label.set_text(&memory.string);
         mem_container.set_tooltip_text(Some(&format!("Memory: {}", memory.string)));
         update_status(
             &mem_container,
             &mem_icon,
-            StatusLevel::memory(memory.used_percent),
+            memory
+                .used_percent
+                .map_or(StatusLevel::Warning, StatusLevel::memory),
             "drive-harddisk-symbolic",
         );
 
@@ -329,6 +378,7 @@ fn top_bar(app: &Application) {
 
         ControlFlow::Continue
     });
+    workspace_container
 }
 
 fn network_entry(text: &str, icon: &str, tooltip: &str) -> Box {
@@ -450,8 +500,7 @@ fn init_style(provider: &impl IsA<StyleProvider>) {
     );
 }
 
-fn populate_workspace_box(workspace_container: &Box) {
-    let workspaces = workspaces::get_workspaces();
+fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
     let mut ws_opt = workspace_container.first_child();
 
     while let Some(ref workspace) = ws_opt {
@@ -480,7 +529,7 @@ fn populate_workspace_box(workspace_container: &Box) {
     }
 }
 
-fn bottom_bar(app: &Application) {
+fn bottom_bar(app: &Application, ws: &Workspaces) -> Box {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
@@ -499,7 +548,7 @@ fn bottom_bar(app: &Application) {
         .css_name("workspace-windows-container")
         .build();
 
-    populate_windows_container(&workspace_windows_container);
+    populate_windows_container(&workspace_windows_container, ws);
     let tasks = task_scroller(&workspace_windows_container);
     main_container.append(&tasks);
     let window = ApplicationWindow::builder()
@@ -519,29 +568,11 @@ fn bottom_bar(app: &Application) {
 
     window.set_decorated(true);
     window.present();
-    let (tx, rx) = mpsc::channel();
-
-    // check if workspace activity in different thread to avoid blocking
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(25));
-        if workspaces::is_activity() {
-            tx.send(()).unwrap();
-        }
-    });
-
-    glib::source::timeout_add_local(Duration::from_millis(25), move || {
-        if let Ok(_) = rx.try_recv() {
-            populate_windows_container(&workspace_windows_container);
-        }
-
-        ControlFlow::Continue
-    });
+    workspace_windows_container
 }
 
-fn populate_windows_container(container: &Box) {
-    let workspaces = workspaces::get_workspaces();
-
-    let sorted: &mut Vec<_> = &mut workspaces.into_iter().collect();
+fn populate_windows_container(container: &Box, workspaces: &Workspaces) {
+    let mut sorted: Vec<(&usize, &Workspace)> = workspaces.iter().collect();
 
     // sort by recently used
     sorted.sort_by(|w1, w2| w1.1.order.cmp(&w2.1.order));
@@ -780,6 +811,50 @@ mod tests {
         );
         update_networks(&area, &mut previous, Err("Network fixture error".into()));
         assert!(area.first_child().unwrap().has_css_class("warning"));
+
+        let workspaces = Box::new(Orientation::Horizontal, 4);
+        for tag in 1..=2 {
+            workspaces.append(&Button::builder().name(tag.to_string()).build());
+        }
+        let windows = Box::new(Orientation::Horizontal, 12);
+        let state = Workspaces::from([(
+            1,
+            Workspace {
+                windows: vec![workspaces::Window {
+                    name: "Ghostty".into(),
+                    info: "Window fixture".into(),
+                    address: "abc".into(),
+                    class: "com.mitchellh.ghostty".into(),
+                    tag: 1,
+                    order: 0,
+                }],
+                tag: 1,
+                order: 0,
+                active: true,
+            },
+        )]);
+        populate_workspace_box(&workspaces, &state);
+        populate_windows_container(&windows, &state);
+        assert!(workspaces.first_child().unwrap().has_css_class("active"));
+        assert!(!workspaces.last_child().unwrap().is_visible());
+        assert_eq!(windows.first_child().unwrap().widget_name(), "1");
+        let empty = Workspaces::from([(
+            2,
+            Workspace {
+                windows: Vec::new(),
+                tag: 2,
+                order: 0,
+                active: true,
+            },
+        )]);
+        populate_workspace_box(&workspaces, &empty);
+        populate_windows_container(&windows, &empty);
+        assert!(!workspaces.first_child().unwrap().is_visible());
+        assert!(workspaces
+            .last_child()
+            .unwrap()
+            .has_css_class("empty-active"));
+        assert_eq!(windows.first_child().unwrap().widget_name(), "2");
 
         let cpu = metric_label("cpu-label", 8);
         let memory = metric_label("mem-label", 5);

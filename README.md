@@ -61,6 +61,12 @@ its original font stack and refines its spacing, colors, and active indicators.
 
 ### Status-bar experiment
 
+This branch merges `event-driven-updates`: one persistent, reconnecting Hyprland
+event stream updates both bars from the same JSON workspace snapshot, coalescing
+event bursts instead of polling each bar separately. Runtime CPU-core detection
+and panic-free status reads are retained alongside the Autumn refinements.
+The current Lua dispatch syntax and reading dispatch replies are preserved.
+
 The `experiment/autumn-status-bars` branch keeps the warm-white background opaque
 and replaces active-item glows with a peach fill and a 2 px red underline.
 The top and bottom bars target 36 px and 38 px respectively, with 15 px text,
@@ -152,7 +158,5 @@ Things to do in order of priority:
 ## Known Issues
 * Only expects and appears on a single display
 * If display is turned off and on, bar is no longer present but process still running
-* Certain Website URLS (or window titles for that matter) crash the bar
-* on 64 core cpu, always showing ~96-100% usage
 * ghostty has no current icons
     * need to properly create submodules of assets rather than coppying the files...
