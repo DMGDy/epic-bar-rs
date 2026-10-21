@@ -102,13 +102,16 @@ fn build_ui(app: &Application) -> Result<(), String> {
 
     // Both bars use the same snapshot; coalesce event bursts into one refresh.
     glib::spawn_future_local(async move {
-        while let Ok(_event) = rx.recv().await {
+        let mut attention = workspaces::Attention::default();
+        while let Ok(event) = rx.recv().await {
+            attention.observe(&event);
             for _ in 0..64 {
-                if rx.try_recv().is_err() {
-                    break;
+                match rx.try_recv() {
+                    Ok(event) => attention.observe(&event),
+                    Err(_) => break,
                 }
             }
-            let state = match workspaces::get_workspaces() {
+            let mut state = match workspaces::get_workspaces() {
                 Ok(state) => state,
                 Err(error) => {
                     eprintln!("epic-bar-rs: cannot refresh bars: {error}");
@@ -117,6 +120,7 @@ fn build_ui(app: &Application) -> Result<(), String> {
                     continue;
                 }
             };
+            attention.apply(&mut state);
             workspace_container.set_tooltip_text(None);
             windows_container.widget().set_tooltip_text(None);
             populate_workspace_box(&workspace_container, &state);
@@ -537,6 +541,7 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
             workspace.set_tooltip_text(Some(&workspace_info.tooltip()));
+            theme::set_urgent(workspace, workspace_info.urgent());
             if workspace_info.active && workspace_info.windows.is_empty() {
                 workspace.remove_css_class("occupied");
                 workspace.remove_css_class("active");
@@ -553,6 +558,7 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
         } else {
             workspace.set_visible(false);
             workspace.set_tooltip_text(None);
+            theme::set_urgent(workspace, false);
         }
         ws_opt = workspace.next_sibling();
     }
@@ -649,6 +655,38 @@ mod tests {
             "unexpected color for {:?}",
             widget.css_classes()
         );
+    }
+
+    #[allow(deprecated)]
+    pub(crate) fn assert_attention_background(widget: &impl IsA<gtk::Widget>) {
+        let widget = widget.as_ref();
+        assert!(widget.has_css_class("urgent"));
+        assert!(widget.has_css_class("attention-static"));
+        let snapshot = gtk::Snapshot::new();
+        snapshot.render_background(&widget.style_context(), 0.0, 0.0, 40.0, 40.0);
+        snapshot.render_frame(&widget.style_context(), 0.0, 0.0, 40.0, 40.0);
+        let node = snapshot
+            .to_node()
+            .expect("attention must paint a background");
+        let mut surface =
+            gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 40, 40).unwrap();
+        node.draw(&gtk::cairo::Context::new(&surface).unwrap());
+        let stride = surface.stride() as usize;
+        let offset = 20 * stride + 20 * 4;
+        let data = surface.data().unwrap();
+        assert_eq!(
+            u32::from_ne_bytes(data[offset..offset + 4].try_into().unwrap()),
+            0xffffe3a8,
+            "attention background was hidden by focus or hover styling"
+        );
+        if widget.has_css_class("active") {
+            let offset = 39 * stride + 20 * 4;
+            assert_eq!(
+                u32::from_ne_bytes(data[offset..offset + 4].try_into().unwrap()),
+                0xff8c1612,
+                "attention hid the red active-workspace underline"
+            );
+        }
     }
 
     // GTK 4.16 exposes CSS background rendering through StyleContext.
@@ -840,6 +878,8 @@ mod tests {
                     class: "com.mitchellh.ghostty".into(),
                     tag: 1,
                     order: 0,
+                    focused: true,
+                    urgent: false,
                 }],
                 tag: 1,
                 order: 0,
@@ -897,6 +937,8 @@ mod tests {
             class: "firefox".into(),
             tag: 1,
             order: 1,
+            focused: false,
+            urgent: false,
         });
         populate_workspace_box(&workspaces, &state);
         windows.update(&state);
@@ -933,6 +975,36 @@ mod tests {
             workspaces.last_child().unwrap().tooltip_text().as_deref(),
             Some("Workspace 2\n- Updated <b>title</b> & details")
         );
+        let settings = gtk::Settings::default().unwrap();
+        let animations = settings.property::<bool>("gtk-enable-animations");
+        settings.set_property("gtk-enable-animations", false);
+        let mut attention = workspaces::Attention::default();
+        attention.observe(&workspaces::HyprEvent::Urgent("def".into()));
+        attention.apply(&mut state);
+        populate_workspace_box(&workspaces, &state);
+        assert!(
+            first_workspace.has_css_class("active"),
+            "attention changed the active workspace"
+        );
+        assert_attention_background(&first_workspace);
+        assert_color(&top_label, "#703900");
+        assert!(!workspaces.last_child().unwrap().has_css_class("urgent"));
+        let selection = selection::Selection::new(&workspaces);
+        assert_attention_background(&first_workspace);
+        assert_eq!(
+            first_workspace.tooltip_text().as_deref(),
+            Some("Workspace 1\n- Second window [needs attention]")
+        );
+        attention.observe(&workspaces::HyprEvent::ActiveWindow(Some("def".into())));
+        attention.apply(&mut state);
+        populate_workspace_box(&workspaces, &state);
+        assert!(!first_workspace.has_css_class("urgent"));
+        assert!(!first_workspace.has_css_class("attention-static"));
+        assert_color(&top_label, "#8c1612");
+        settings.set_property("gtk-enable-animations", animations);
+        state.get_mut(&1).unwrap().windows[0].urgent = true;
+        populate_workspace_box(&workspaces, &state);
+        assert!(first_workspace.has_css_class("urgent"));
         let empty = Workspaces::from([(
             2,
             Workspace {
@@ -946,6 +1018,8 @@ mod tests {
         windows.update(&empty);
         assert!(!workspaces.first_child().unwrap().is_visible());
         assert_eq!(first_workspace.tooltip_text(), None);
+        assert!(!first_workspace.has_css_class("urgent"));
+        drop(selection);
         assert!(workspaces
             .last_child()
             .unwrap()

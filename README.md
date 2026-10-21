@@ -131,6 +131,25 @@ or trackpad, without adding a scrollbar or growing the panel.
 All Autumn tooltips use an explicit warm-white background, dark cocoa text,
 a subtle border, and 16 px text, independent of GTK's light/dark preference.
 
+Hyprland window-attention requests highlight the affected task button, its
+bottom workspace tag, and its top workspace square in amber. The highlight
+pulses twice over 1.2 seconds, then stays solid until that window receives
+focus or closes. GTK's disabled-animation setting uses a solid highlight
+immediately. The normal red active-workspace underline remains visible even
+when another window on that workspace needs attention.
+Window and workspace ordering do not change when attention arrives.
+Visiting a workspace only clears attention for the window that actually gains
+focus; other urgent windows keep their indicators. Highlights follow windows
+when they move, and tooltips identify windows that need attention.
+
+Attention uses the existing Hyprland event connection, including ordered
+per-window urgency/focus events when refreshes are coalesced, without polling.
+It is not a desktop-notification listener: apps must request window attention;
+a Dunst popup alone does not necessarily do so. The pinned Hyprland version
+does not include per-window urgency in its JSON snapshots, so attention is
+learned while the bar is connected, not recovered after a restart or for
+events missed during a connection outage.
+
 To select the saved theme, change `theme.css` to:
 
 ```css

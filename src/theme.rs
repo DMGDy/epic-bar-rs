@@ -5,7 +5,22 @@ use std::{
     rc::Rc,
 };
 
-use gtk::CssProvider;
+use gtk::{prelude::*, CssProvider};
+
+pub fn set_urgent(widget: &impl IsA<gtk::Widget>, urgent: bool) {
+    let widget = widget.as_ref();
+    if urgent {
+        widget.add_css_class("urgent");
+        if widget.settings().property::<bool>("gtk-enable-animations") {
+            widget.remove_css_class("attention-static");
+        } else {
+            widget.add_css_class("attention-static");
+        }
+    } else {
+        widget.remove_css_class("urgent");
+        widget.remove_css_class("attention-static");
+    }
+}
 
 fn first_existing(paths: &[PathBuf]) -> Result<PathBuf, String> {
     for path in paths {

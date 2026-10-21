@@ -227,3 +227,37 @@ tag-label {
 workspace-window-box-active {
     background-color: transparent;
 }
+
+@keyframes attention-pulse {
+    0% { background-color: #ffe3a8; }
+    50% { background-color: #ffc86a; }
+    100% { background-color: #ffe3a8; }
+}
+
+.urgent {
+    animation: attention-pulse 600ms ease-in-out 2;
+}
+
+.bar-button.urgent,
+.bar-button.urgent:hover,
+.animated-workspaces .workspace-button.urgent,
+tag-label.urgent {
+    background-color: #ffe3a8;
+    box-shadow: inset 0 0 0 2px #d97706;
+}
+
+.bar-button.urgent label,
+.bar-button.urgent window-label,
+tag-label.urgent {
+    color: #703900;
+}
+
+.bar-button.active.urgent,
+.animated-workspaces .workspace-button.active.urgent {
+    border-bottom-color: @autumn_accent;
+}
+
+.urgent.attention-static {
+    animation: none;
+    transition: none;
+}

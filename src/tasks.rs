@@ -8,6 +8,7 @@ use gtk::{gio, glib, prelude::*, Box, Button, Fixed, Image, Label, Orientation, 
 
 use crate::{
     selection::{Motion, Rect},
+    theme,
     workspaces::{self, Window, Workspaces},
 };
 
@@ -95,7 +96,13 @@ impl WindowTile {
 
     fn update(&mut self, window: &Window, active: bool) {
         self.label.set_text(&window.name);
-        self.button.set_tooltip_text(Some(&window.info));
+        let tooltip = if window.urgent {
+            format!("{}\nNeeds attention", window.info)
+        } else {
+            window.info.clone()
+        };
+        self.button.set_tooltip_text(Some(&tooltip));
+        theme::set_urgent(&self.button, window.urgent);
         if active {
             self.button.add_css_class("active");
         } else {
@@ -220,6 +227,11 @@ impl Tasks {
             if let (Item::Window(window, active), Tile::Window(tile)) = (&item, &mut entry.tile) {
                 tile.update(window, *active);
             }
+            if let (Item::Tag(tag), Tile::Tag(label)) = (&item, &entry.tile) {
+                let workspace = &workspaces[tag];
+                theme::set_urgent(label, workspace.urgent());
+                label.set_tooltip_text(workspace.urgent().then(|| workspace.tooltip()).as_deref());
+            }
             // GtkFixed needs an explicit natural width; discard stale requests before measuring.
             let widget = entry.tile.widget();
             widget.set_width_request(-1);
@@ -296,6 +308,8 @@ pub(crate) fn assert_widgets() {
         class: "com.mitchellh.ghostty".into(),
         tag,
         order,
+        focused: order == 0,
+        urgent: false,
     };
     let initial = Workspaces::from([
         (
@@ -495,4 +509,69 @@ pub(crate) fn assert_widgets() {
         !tasks.state.borrow().ticking,
         "unmapped tasks requested animation frames"
     );
+
+    let settings = gtk::Settings::default().unwrap();
+    let animations = settings.property::<bool>("gtk-enable-animations");
+    settings.set_property("gtk-enable-animations", false);
+    let mut notified = Workspaces::from([(
+        1,
+        Workspace {
+            windows: vec![window("a", 1, 0), window("b", 1, 1)],
+            tag: 1,
+            order: 0,
+            active: true,
+        },
+    )]);
+    tasks.update_at(&notified, 600_000, false);
+    let tag = tasks.state.borrow().entries[&Key::Tag(1)]
+        .tile
+        .widget()
+        .clone();
+    let button = tasks.state.borrow().entries[&Key::Window("b".into())]
+        .tile
+        .widget()
+        .clone();
+    let before = tasks.state.borrow().entries[&Key::Window("b".into())].target;
+    let mut attention = workspaces::Attention::default();
+    attention.observe(&workspaces::HyprEvent::Urgent("b".into()));
+    attention.apply(&mut notified);
+    tasks.update_at(&notified, 700_000, false);
+    assert_eq!(
+        tasks.state.borrow().entries[&Key::Window("b".into())].target,
+        before
+    );
+    assert_eq!(
+        tasks.state.borrow().entries[&Key::Window("b".into())]
+            .tile
+            .widget(),
+        &button
+    );
+    crate::tests::assert_attention_background(&button);
+    crate::tests::assert_attention_background(&tag);
+    assert_eq!(tag.color(), gtk::gdk::RGBA::parse("#703900").unwrap());
+    let title = button.first_child().unwrap().last_child().unwrap();
+    assert_eq!(title.color(), gtk::gdk::RGBA::parse("#703900").unwrap());
+    assert_eq!(
+        button.tooltip_text().as_deref(),
+        Some("b tooltip\nNeeds attention")
+    );
+    assert!(tasks.state.borrow().entries[&Key::Window("a".into())]
+        .tile
+        .widget()
+        .has_css_class("active"));
+    assert!(!tasks.state.borrow().entries[&Key::Window("a".into())]
+        .tile
+        .widget()
+        .has_css_class("urgent"));
+    settings.set_property("gtk-enable-animations", true);
+    tasks.update_at(&notified, 800_000, false);
+    assert!(button.has_css_class("urgent"));
+    assert!(!button.has_css_class("attention-static"));
+    attention.observe(&workspaces::HyprEvent::ActiveWindow(Some("b".into())));
+    attention.apply(&mut notified);
+    tasks.update_at(&notified, 900_000, false);
+    assert!(!button.has_css_class("urgent"));
+    assert!(!tag.has_css_class("urgent"));
+    assert_eq!(button.tooltip_text().as_deref(), Some("b tooltip"));
+    settings.set_property("gtk-enable-animations", animations);
 }

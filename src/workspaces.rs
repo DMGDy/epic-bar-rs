@@ -1,11 +1,11 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env,
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
 };
 
-use serde::Deserialize;
+use serde::{de::Error as _, Deserialize};
 
 pub const WORKSPACE_COUNT: usize = 9;
 
@@ -13,24 +13,34 @@ pub const WORKSPACE_COUNT: usize = 9;
  * socket2 lines look like `EVENT>>data`; only events that require the bar
  * to refresh are represented here, everything else is ignored while reading.
  */
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HyprEvent {
     Workspace,
-    ActiveWindow,
+    ActiveWindow(Option<String>),
+    Urgent(String),
     WindowTitle,
     OpenWindow,
-    CloseWindow,
+    CloseWindow(String),
     MoveWindow,
 }
 
 impl HyprEvent {
-    fn parse(name: &str) -> Option<Self> {
+    fn parse(name: &str, data: &str) -> Option<Self> {
         match name {
             "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" => Some(Self::Workspace),
-            "activewindow" | "activewindowv2" => Some(Self::ActiveWindow),
+            "activewindow" => Some(Self::ActiveWindow(None)),
+            "activewindowv2" if data.is_empty() => Some(Self::ActiveWindow(None)),
+            "activewindowv2" | "urgent" | "closewindow" => match parse_address(data) {
+                Some(address) if name == "urgent" => Some(Self::Urgent(address)),
+                Some(address) if name == "closewindow" => Some(Self::CloseWindow(address)),
+                Some(address) => Some(Self::ActiveWindow(Some(address))),
+                None => {
+                    eprintln!("epic-bar-rs: invalid {name} event address: {data:?}");
+                    None
+                }
+            },
             "windowtitle" | "windowtitlev2" => Some(Self::WindowTitle),
             "openwindow" => Some(Self::OpenWindow),
-            "closewindow" => Some(Self::CloseWindow),
             "movewindow" => Some(Self::MoveWindow),
             _ => None,
         }
@@ -48,7 +58,9 @@ impl HyprEvent {
  * info: the secondary title or "information" of the window
  * pid: pid associated with the window open
  * tag: the workspace index th window exists on
- * order: 0 meaning active, the order of when it was used
+ * order: focus history, with 0 meaning most recently focused
+ * focused: actual compositor focus, which can differ from focus history
+ * urgent: attention observed for this window since connecting
  */
 pub struct Window {
     pub name: String,
@@ -57,6 +69,49 @@ pub struct Window {
     pub class: String,
     pub tag: usize,
     pub order: usize,
+    pub focused: bool,
+    pub urgent: bool,
+}
+
+fn parse_address(value: &str) -> Option<String> {
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    let address = usize::from_str_radix(value, 16).ok()?;
+    (address != 0).then(|| format!("{address:x}"))
+}
+
+#[derive(Default)]
+pub struct Attention {
+    windows: BTreeSet<String>,
+}
+
+impl Attention {
+    pub fn observe(&mut self, event: &HyprEvent) {
+        match event {
+            HyprEvent::Urgent(address) => {
+                self.windows.insert(address.clone());
+            }
+            HyprEvent::ActiveWindow(Some(address)) | HyprEvent::CloseWindow(address) => {
+                self.windows.remove(address);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn apply(&mut self, workspaces: &mut Workspaces) {
+        self.windows.retain(|address| {
+            workspaces.values().any(|workspace| {
+                workspace
+                    .windows
+                    .iter()
+                    .any(|window| &window.address == address && !window.focused)
+            })
+        });
+        for workspace in workspaces.values_mut() {
+            for window in &mut workspace.windows {
+                window.urgent = self.windows.contains(&window.address);
+            }
+        }
+    }
 }
 
 // sorted by order (revent activity)
@@ -73,6 +128,10 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    pub fn urgent(&self) -> bool {
+        self.windows.iter().any(|window| window.urgent)
+    }
+
     pub fn tooltip(&self) -> String {
         let mut text = format!("Workspace {}", self.tag);
         if self.windows.is_empty() {
@@ -86,6 +145,9 @@ impl Workspace {
                 .unwrap_or("Untitled window");
             text.push_str("\n- ");
             text.push_str(title);
+            if window.urgent {
+                text.push_str(" [needs attention]");
+            }
         }
         text
     }
@@ -148,6 +210,11 @@ struct JsonActiveWorkspace {
     id: i64,
 }
 
+#[derive(Deserialize)]
+struct JsonActiveWindow {
+    address: Option<String>,
+}
+
 fn get_windows() -> Result<Vec<Window>, String> {
     let reply = request("j/clients")?;
     parse_windows(&reply).map_err(|error| format!("invalid Hyprland clients: {error}"))
@@ -184,13 +251,9 @@ fn parse_windows(reply: &str) -> Result<Vec<Window>, serde_json::Error> {
             title => title,
         };
 
-        // JSON addresses carry a 0x prefix; strip it so switch_window
-        // (which re-adds 0x) keeps working unchanged
-        let address = client
-            .address
-            .strip_prefix("0x")
-            .unwrap_or(&client.address)
-            .to_string();
+        let address = parse_address(&client.address).ok_or_else(|| {
+            serde_json::Error::custom(format!("invalid window address: {:?}", client.address))
+        })?;
 
         all_windows.push(Window {
             name,
@@ -200,6 +263,8 @@ fn parse_windows(reply: &str) -> Result<Vec<Window>, serde_json::Error> {
             tag,
             // Hyprland uses -1 for clients that have not been focused yet.
             order: usize::try_from(client.focus_history_id).unwrap_or(usize::MAX),
+            focused: false,
+            urgent: false,
         });
     }
 
@@ -249,9 +314,10 @@ pub fn next_event(reader: &mut BufReader<UnixStream>) -> Option<HyprEvent> {
         match reader.read_line(&mut line) {
             Ok(0) => return None,
             Ok(_) => {
-                let name = line.split(">>").next().unwrap_or("");
-                if let Some(event) = HyprEvent::parse(name) {
-                    return Some(event);
+                if let Some((name, data)) = line.trim_end_matches(['\r', '\n']).split_once(">>") {
+                    if let Some(event) = HyprEvent::parse(name, data) {
+                        return Some(event);
+                    }
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -310,11 +376,28 @@ fn set_active_workspace(workspaces: &mut Workspaces, tag: usize) {
 }
 
 pub fn get_workspaces() -> Result<Workspaces, String> {
-    let all_windows = get_windows()?;
+    let mut all_windows = get_windows()?;
+    let reply = request("j/activewindow")?;
+    let focused = parse_active_window(&reply)?;
+    for window in &mut all_windows {
+        window.focused = focused.as_deref() == Some(window.address.as_str());
+    }
     let mut workspaces = assign_tags_to_win(all_windows);
     check_empty_active_workspace(&mut workspaces)?;
 
     Ok(workspaces)
+}
+
+fn parse_active_window(reply: &str) -> Result<Option<String>, String> {
+    let active: JsonActiveWindow = serde_json::from_str(reply)
+        .map_err(|error| format!("invalid Hyprland active window: {error}"))?;
+    active
+        .address
+        .map(|address| {
+            parse_address(&address)
+                .ok_or_else(|| format!("invalid Hyprland active window address: {address:?}"))
+        })
+        .transpose()
 }
 
 #[cfg(test)]
@@ -386,9 +469,9 @@ mod tests {
         let mut reader = BufReader::new(reader);
         for event in [
             HyprEvent::Workspace,
-            HyprEvent::ActiveWindow,
+            HyprEvent::ActiveWindow(None),
             HyprEvent::OpenWindow,
-            HyprEvent::CloseWindow,
+            HyprEvent::CloseWindow("abc".into()),
             HyprEvent::MoveWindow,
         ] {
             assert_eq!(next_event(&mut reader), Some(event));
@@ -420,14 +503,184 @@ mod tests {
     #[test]
     fn title_changes_and_monitor_focus_refresh_the_bars() {
         for name in ["windowtitle", "windowtitlev2"] {
-            assert_eq!(HyprEvent::parse(name), Some(HyprEvent::WindowTitle));
+            assert_eq!(HyprEvent::parse(name, ""), Some(HyprEvent::WindowTitle));
         }
         for name in ["workspacev2", "focusedmon", "focusedmonv2"] {
-            assert_eq!(HyprEvent::parse(name), Some(HyprEvent::Workspace));
+            assert_eq!(HyprEvent::parse(name, ""), Some(HyprEvent::Workspace));
         }
         assert_eq!(
-            HyprEvent::parse("activewindowv2"),
-            Some(HyprEvent::ActiveWindow)
+            HyprEvent::parse("activewindowv2", ""),
+            Some(HyprEvent::ActiveWindow(None))
+        );
+    }
+
+    #[test]
+    fn urgency_events_preserve_normalized_addresses_and_focus_order() {
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        writer
+            .write_all(b"unrelated\nurgent>>\nurgent>>invalid\nurgent>>0x00AB\r\nactivewindowv2>>ab\nurgent>>cd\nactivewindowv2>>\n")
+            .unwrap();
+        writer.shutdown(Shutdown::Write).unwrap();
+        let mut reader = BufReader::new(reader);
+        for event in [
+            HyprEvent::Urgent("ab".into()),
+            HyprEvent::ActiveWindow(Some("ab".into())),
+            HyprEvent::Urgent("cd".into()),
+            HyprEvent::ActiveWindow(None),
+        ] {
+            assert_eq!(next_event(&mut reader), Some(event));
+        }
+        assert_eq!(next_event(&mut reader), None);
+        assert_eq!(HyprEvent::parse("urgent", "0"), None);
+        assert_eq!(HyprEvent::parse("activewindowv2", "invalid"), None);
+    }
+
+    #[test]
+    fn active_window_reply_distinguishes_no_focus_from_invalid_data() {
+        assert_eq!(parse_active_window("{}").unwrap(), None);
+        assert_eq!(
+            parse_active_window(r#"{"address":"0x00AB","title":"Ignored"}"#).unwrap(),
+            Some("ab".into())
+        );
+        assert!(parse_active_window("invalid").is_err());
+        assert!(parse_active_window(r#"{"address":"invalid"}"#).is_err());
+        let windows = parse_windows(
+            r#"[{"address":"0x00AB","title":"Window","class":"kitty",
+                "initialTitle":"Kitty","focusHistoryID":0,"workspace":{"id":1}}]"#,
+        )
+        .unwrap();
+        assert_eq!(windows[0].address, "ab");
+        assert!(parse_windows(
+            r#"[{"address":"invalid","title":"Window","class":"kitty",
+                "initialTitle":"Kitty","focusHistoryID":0,"workspace":{"id":1}}]"#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn attention_follows_windows_without_changing_workspace_or_window_order() {
+        let mut state = assign_tags_to_win(
+            parse_windows(
+                r#"[
+                {"address":"0xa","title":"Focused","class":"kitty",
+                 "initialTitle":"Kitty","focusHistoryID":0,"workspace":{"id":1}},
+                {"address":"0xb","title":"Message","class":"chat",
+                 "initialTitle":"Chat","focusHistoryID":1,"workspace":{"id":1}},
+                {"address":"0xc","title":"Other message","class":"chat",
+                 "initialTitle":"Chat","focusHistoryID":2,"workspace":{"id":2}},
+                {"address":"0xd","title":"Other window","class":"editor",
+                 "initialTitle":"Editor","focusHistoryID":3,"workspace":{"id":2}}
+            ]"#,
+            )
+            .unwrap(),
+        );
+        state.get_mut(&1).unwrap().windows[0].focused = true;
+        let before: Vec<_> = state
+            .values()
+            .map(|workspace| {
+                (
+                    workspace.tag,
+                    workspace.order,
+                    workspace.active,
+                    workspace
+                        .windows
+                        .iter()
+                        .map(|w| w.address.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        let mut attention = Attention::default();
+        attention.observe(&HyprEvent::Urgent("b".into()));
+        attention.observe(&HyprEvent::Urgent("c".into()));
+        attention.observe(&HyprEvent::Urgent("b".into()));
+        attention.apply(&mut state);
+        assert!(state[&1].active && state[&1].urgent());
+        assert!(state[&2].urgent());
+        assert_eq!(
+            state[&1].tooltip(),
+            "Workspace 1\n- Focused\n- Message [needs attention]"
+        );
+        let after: Vec<_> = state
+            .values()
+            .map(|workspace| {
+                (
+                    workspace.tag,
+                    workspace.order,
+                    workspace.active,
+                    workspace
+                        .windows
+                        .iter()
+                        .map(|w| w.address.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(before, after);
+
+        set_active_workspace(&mut state, 2);
+        state.get_mut(&1).unwrap().windows[0].focused = false;
+        state.get_mut(&2).unwrap().windows[1].focused = true;
+        attention.observe(&HyprEvent::ActiveWindow(Some("d".into())));
+        attention.apply(&mut state);
+        assert!(
+            state[&1].urgent() && state[&2].urgent(),
+            "visiting a workspace cleared other windows"
+        );
+
+        let mut moved = state.get_mut(&1).unwrap().windows.remove(1);
+        moved.tag = 2;
+        state.get_mut(&2).unwrap().windows.push(moved);
+        attention.apply(&mut state);
+        assert!(!state[&1].urgent());
+        assert!(state[&2].windows[2].urgent);
+
+        // Both focus changes can be coalesced before the next snapshot.
+        attention.observe(&HyprEvent::ActiveWindow(Some("c".into())));
+        attention.observe(&HyprEvent::ActiveWindow(Some("d".into())));
+        attention.apply(&mut state);
+        assert!(!state[&2].windows[0].urgent);
+        assert!(state[&2].windows[2].urgent);
+        state.get_mut(&2).unwrap().windows.pop();
+        attention.apply(&mut state);
+        assert!(!state[&2].urgent());
+        assert!(attention.windows.is_empty());
+    }
+
+    #[test]
+    fn attention_reconciles_actual_focus_not_last_focus_history() {
+        let mut state = assign_tags_to_win(
+            parse_windows(
+                r#"[{"address":"0xa","title":"Last focused","class":"kitty",
+                "initialTitle":"Kitty","focusHistoryID":0,"workspace":{"id":1}}]"#,
+            )
+            .unwrap(),
+        );
+        let mut attention = Attention::default();
+        attention.observe(&HyprEvent::Urgent("a".into()));
+        attention.apply(&mut state);
+        assert!(
+            state[&1].windows[0].urgent,
+            "last focused is not necessarily focused now"
+        );
+        state.get_mut(&1).unwrap().windows[0].focused = true;
+        attention.apply(&mut state);
+        assert!(!state[&1].urgent());
+        assert!(attention.windows.is_empty());
+        attention.observe(&HyprEvent::Urgent("dead".into()));
+        attention.apply(&mut state);
+        assert!(
+            attention.windows.is_empty(),
+            "closed windows retained attention"
+        );
+        state.get_mut(&1).unwrap().windows[0].focused = false;
+        attention.observe(&HyprEvent::Urgent("a".into()));
+        attention.observe(&HyprEvent::CloseWindow("a".into()));
+        attention.observe(&HyprEvent::OpenWindow);
+        attention.apply(&mut state);
+        assert!(
+            !state[&1].urgent(),
+            "a new window reusing a closed address inherited its attention"
         );
     }
 }
