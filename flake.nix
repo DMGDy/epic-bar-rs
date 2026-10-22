@@ -22,6 +22,18 @@
     rustc = rustToolchain;
   };
   version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+  # The older flake pin has grim 1.4, without native toplevel capture.
+  preview-grim = pkgs.grim.overrideAttrs (old: {
+    version = "1.5.0";
+    src = pkgs.fetchFromGitLab {
+      domain = "gitlab.freedesktop.org";
+      owner = "emersion";
+      repo = "grim";
+      rev = "v1.5.0";
+      hash = "sha256-oPo6zrS3gCnviIK0+gPvtal+6c7fNFWtXnAA0YfaS+U=";
+    };
+    depsBuildBuild = (old.depsBuildBuild or []) ++ [ pkgs.pkg-config ];
+  });
   epic-bar = rustPlatform.buildRustPackage {
     pname = "epic-bar-rs";
     version = "${version}";
@@ -55,7 +67,7 @@
     '';
 
     preFixup = ''
-      gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw pkgs.iproute2 ]})
+      gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw pkgs.iproute2 preview-grim ]})
       gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share)
       gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.papirus-icon-theme}/share)
     '';
@@ -66,6 +78,7 @@
     devShells.${system}.default = pkgs.mkShell {
       buildInputs = with pkgs; [
         rustToolchain
+        preview-grim
         epic-bar  
       ] ++ epic-bar.buildInputs;  
 

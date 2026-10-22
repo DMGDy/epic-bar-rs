@@ -9,6 +9,7 @@ use gtk::{gio, glib, prelude::*, Box, Button, Fixed, Image, Label, Orientation, 
 use crate::{
     icons,
     marquee::{Marquee, Mode},
+    previews::{Anchor, HoverPreview, Previews},
     selection::{Motion, Rect},
     theme,
     workspaces::{self, Window, Workspaces},
@@ -38,7 +39,7 @@ impl Item<'_> {
         }
     }
 
-    fn create(&self, icons: &mut icons::Resolver) -> Tile {
+    fn create(&self, icons: &mut icons::Resolver, previews: Option<&Previews>) -> Tile {
         match self {
             Self::Tag(tag) => Tile::Tag(
                 Label::builder()
@@ -55,12 +56,13 @@ impl Item<'_> {
                     .label("󰟢")
                     .build(),
             ),
-            Self::Window(window, _) => Tile::Window(WindowTile::new(window, icons)),
+            Self::Window(window, _) => Tile::Window(WindowTile::new(window, icons, previews)),
         }
     }
 }
 
 struct WindowTile {
+    preview: Option<HoverPreview>,
     button: Button,
     label: Marquee,
     icon: Image,
@@ -68,7 +70,7 @@ struct WindowTile {
 }
 
 impl WindowTile {
-    fn new(window: &Window, icons: &mut icons::Resolver) -> Self {
+    fn new(window: &Window, icons: &mut icons::Resolver, previews: Option<&Previews>) -> Self {
         let button = Button::builder()
             .css_name("window-box")
             .css_classes(["bar-button"])
@@ -91,6 +93,8 @@ impl WindowTile {
             gio::spawn_blocking(move || workspaces::switch_window(&address));
         });
         Self {
+            preview: previews
+                .map(|previews| previews.attach(&button, Anchor::Window(window.address.clone()))),
             button,
             label,
             icon,
@@ -106,6 +110,7 @@ impl WindowTile {
             window.caption().to_string()
         };
         self.button.set_tooltip_text(Some(&tooltip));
+        self.button.set_has_tooltip(self.preview.is_none());
         theme::set_urgent(&self.button, window.urgent);
         if active {
             self.button.add_css_class("active");
@@ -146,6 +151,7 @@ struct State {
     entries: BTreeMap<Key, Entry>,
     ticking: bool,
     icons: icons::Resolver,
+    previews: Option<Previews>,
 }
 
 pub struct Tasks {
@@ -155,13 +161,16 @@ pub struct Tasks {
 }
 
 impl Tasks {
-    pub fn new(workspaces: &Workspaces) -> Self {
+    pub fn new(workspaces: &Workspaces, previews: Option<Previews>) -> Self {
         let fixed = Fixed::builder()
             .css_name("workspace-windows-container")
             .hexpand(true)
             .vexpand(true)
             .build();
-        let state = Rc::new(RefCell::new(State::default()));
+        let state = Rc::new(RefCell::new(State {
+            previews,
+            ..State::default()
+        }));
         let map_state = state.clone();
         fixed.connect_map(move |fixed| start(fixed, &map_state));
         let app_monitor = gio::AppInfoMonitor::get();
@@ -234,9 +243,14 @@ impl Tasks {
             }
             let key = item.key();
             keep.insert(key.clone());
-            let State { entries, icons, .. } = &mut *state;
+            let State {
+                entries,
+                icons,
+                previews,
+                ..
+            } = &mut *state;
             let entry = entries.entry(key).or_insert_with(|| {
-                let tile = item.create(icons);
+                let tile = item.create(icons, previews.as_ref());
                 tile.widget().set_height_request(HEIGHT);
                 self.fixed.put(tile.widget(), x, 0.0);
                 Entry {
@@ -352,6 +366,7 @@ pub(crate) fn assert_widgets() {
         order,
         focused: order == 0,
         urgent: false,
+        preview: None,
     };
     let initial = Workspaces::from([
         (
@@ -373,7 +388,7 @@ pub(crate) fn assert_widgets() {
             },
         ),
     ]);
-    let tasks = Tasks::new(&initial);
+    let tasks = Tasks::new(&initial, None);
     assert!(tasks.state.borrow().entries[&Key::Tag(1)]
         .tile
         .widget()

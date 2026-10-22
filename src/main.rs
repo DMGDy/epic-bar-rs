@@ -23,11 +23,13 @@ use gtk::{
 
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
+mod capture;
 mod icons;
 mod marquee;
 mod media;
 mod network;
 mod panels;
+mod previews;
 mod selection;
 mod status;
 mod tasks;
@@ -72,9 +74,11 @@ fn main() -> glib::ExitCode {
 
 fn build_ui(app: &Application) -> Result<(), String> {
     let state = workspaces::get_workspaces()?;
-    let (workspace_container, workspace_selection) = top_bar(app, &state);
-    let windows_container = bottom_bar(app, &state);
+    let previews = previews::Previews::new(&state);
+    let (workspace_container, workspace_selection) = top_bar(app, &state, &previews);
+    let windows_container = bottom_bar(app, &state, &previews);
     let (tx, rx) = async_channel::bounded::<workspaces::HyprEvent>(64);
+    let preview_signals = previews.signals();
 
     thread::spawn(move || {
         let mut last_error = None;
@@ -82,11 +86,16 @@ fn build_ui(app: &Application) -> Result<(), String> {
             match workspaces::event_socket() {
                 Ok(mut reader) => {
                     last_error = None;
+                    preview_signals.invalidate();
+                    preview_signals
+                        .connected
+                        .store(true, std::sync::atomic::Ordering::Release);
                     // Catch changes missed before connecting or while disconnected.
                     if tx.send_blocking(workspaces::HyprEvent::Workspace).is_err() {
                         return;
                     }
                     while let Some(event) = workspaces::next_event(&mut reader) {
+                        preview_signals.observe(&event);
                         if tx.send_blocking(event).is_err() {
                             return;
                         }
@@ -100,6 +109,10 @@ fn build_ui(app: &Application) -> Result<(), String> {
                     }
                 }
             }
+            preview_signals
+                .connected
+                .store(false, std::sync::atomic::Ordering::Release);
+            preview_signals.invalidate();
             thread::sleep(Duration::from_millis(500));
         }
     });
@@ -125,6 +138,7 @@ fn build_ui(app: &Application) -> Result<(), String> {
                 }
             };
             attention.apply(&mut state);
+            previews.update(&state);
             workspace_container.set_tooltip_text(None);
             windows_container.widget().set_tooltip_text(None);
             populate_workspace_box(&workspace_container, &state);
@@ -135,7 +149,11 @@ fn build_ui(app: &Application) -> Result<(), String> {
     Ok(())
 }
 
-fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
+fn top_bar(
+    app: &Application,
+    ws: &Workspaces,
+    previews: &previews::Previews,
+) -> (Box, selection::Selection) {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
@@ -261,9 +279,17 @@ fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
     );
 
     // init the container
+    let mut workspace_previews = Vec::new();
     for n in 1..workspaces::WORKSPACE_COUNT + 1 {
-        workspace_container.append(&workspace_button(n));
+        let button = workspace_button(n);
+        workspace_previews.push(previews.attach(&button, previews::Anchor::Workspace(n)));
+        workspace_container.append(&button);
     }
+    workspace_container.connect_unmap(move |_| {
+        for preview in &workspace_previews {
+            preview.hide();
+        }
+    });
 
     populate_workspace_box(&workspace_container, ws);
 
@@ -552,6 +578,9 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
         if let Some(workspace_info) = workspace_info_opt {
             workspace.set_visible(true);
             workspace.set_tooltip_text(Some(&workspace_info.tooltip()));
+            if workspace.has_css_class("preview-anchor") {
+                workspace.set_has_tooltip(false);
+            }
             theme::set_urgent(workspace, workspace_info.urgent());
             if workspace_info.active && workspace_info.windows.is_empty() {
                 workspace.remove_css_class("occupied");
@@ -575,7 +604,7 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
     }
 }
 
-fn bottom_bar(app: &Application, ws: &Workspaces) -> tasks::Tasks {
+fn bottom_bar(app: &Application, ws: &Workspaces, previews: &previews::Previews) -> tasks::Tasks {
     let main_container = Box::builder()
         .orientation(Orientation::Horizontal)
         .halign(Align::BaselineFill)
@@ -585,7 +614,7 @@ fn bottom_bar(app: &Application, ws: &Workspaces) -> tasks::Tasks {
         .css_name("main-box")
         .build();
 
-    let workspace_windows_container = tasks::Tasks::new(ws);
+    let workspace_windows_container = tasks::Tasks::new(ws, Some(previews.clone()));
     let tasks = task_scroller(workspace_windows_container.widget());
     main_container.append(&tasks);
     let window = ApplicationWindow::builder()
@@ -902,13 +931,14 @@ mod tests {
                     order: 0,
                     focused: true,
                     urgent: false,
+                    preview: None,
                 }],
                 tag: 1,
                 order: 0,
                 active: true,
             },
         )]);
-        let windows = tasks::Tasks::new(&state);
+        let windows = tasks::Tasks::new(&state, None);
         populate_workspace_box(&workspaces, &state);
         let first_workspace = workspaces.first_child().unwrap();
         assert_eq!(
@@ -965,6 +995,7 @@ mod tests {
             order: 1,
             focused: false,
             urgent: false,
+            preview: None,
         });
         populate_workspace_box(&workspaces, &state);
         windows.update(&state);
@@ -1293,6 +1324,7 @@ mod tests {
         crate::panels::assert_widgets();
         crate::media::assert_widgets();
         crate::marquee::assert_widgets();
+        crate::previews::assert_widgets();
         assert_tooltip_styles();
     }
 }
