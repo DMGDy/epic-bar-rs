@@ -228,6 +228,105 @@ workspace-window-box-active {
     background-color: transparent;
 }
 
+tag-label:not(.first-group) {
+    box-shadow: inset 1px 0 0 @autumn_border;
+}
+
+.status-popup,
+.status-popup > button {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+}
+
+date-container.status-popup {
+    padding: 2px 6px;
+    border-bottom: 2px solid transparent;
+}
+
+.status-popup.popup-open,
+.status-popup:hover {
+    background-color: @autumn_surface;
+}
+
+.bar-popover contents {
+    background-color: @autumn_background;
+    color: @autumn_foreground;
+    border: 1px solid @autumn_border;
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: 0 3px 12px rgba(56, 35, 30, 0.16);
+}
+
+.bar-popover arrow {
+    background-color: @autumn_background;
+    border-color: @autumn_border;
+}
+
+.bar-popover label,
+.bar-popover calendar {
+    color: @autumn_foreground;
+    font-size: 16px;
+}
+
+.bar-popover .popup-secondary {
+    color: @autumn_secondary;
+    font-size: 13px;
+}
+
+.bar-popover .popup-heading {
+    color: @autumn_accent;
+    font-weight: 600;
+}
+
+.bar-popover button {
+    padding: 5px 8px;
+    border-radius: 6px;
+}
+
+.bar-popover button:hover {
+    background-color: @autumn_surface;
+}
+
+.bar-popover calendar label:selected {
+    color: @autumn_accent;
+    background-color: @autumn_selection;
+}
+
+.cpu-history {
+    color: #2563eb;
+}
+
+.memory-history {
+    color: #9333ea;
+}
+
+.media-widget {
+    padding: 0 4px;
+}
+
+.media-control {
+    padding: 4px 5px;
+}
+
+.media-control image {
+    color: #db2777;
+}
+
+.media-title {
+    font-size: 16px;
+    color: @autumn_secondary;
+    padding-left: 4px;
+}
+
+.media-widget.warning .media-title {
+    color: @autumn_warning;
+}
+
 @keyframes attention-pulse {
     0% { background-color: #ffe3a8; }
     50% { background-color: #ffc86a; }

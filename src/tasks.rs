@@ -7,6 +7,8 @@ use std::{
 use gtk::{gio, glib, prelude::*, Box, Button, Fixed, Image, Label, Orientation, Widget};
 
 use crate::{
+    icons,
+    marquee::{Marquee, Mode},
     selection::{Motion, Rect},
     theme,
     workspaces::{self, Window, Workspaces},
@@ -36,13 +38,14 @@ impl Item<'_> {
         }
     }
 
-    fn create(&self) -> Tile {
+    fn create(&self, icons: &mut icons::Resolver) -> Tile {
         match self {
             Self::Tag(tag) => Tile::Tag(
                 Label::builder()
                     .css_name("tag-label")
                     .name(tag.to_string())
                     .label(tag.to_string())
+                    .css_classes(["workspace-group-start"])
                     .build(),
             ),
             Self::Empty(_) => Tile::Empty(
@@ -52,20 +55,20 @@ impl Item<'_> {
                     .label("󰟢")
                     .build(),
             ),
-            Self::Window(window, _) => Tile::Window(WindowTile::new(window)),
+            Self::Window(window, _) => Tile::Window(WindowTile::new(window, icons)),
         }
     }
 }
 
 struct WindowTile {
     button: Button,
-    label: Label,
+    label: Marquee,
     icon: Image,
     class: String,
 }
 
 impl WindowTile {
-    fn new(window: &Window) -> Self {
+    fn new(window: &Window, icons: &mut icons::Resolver) -> Self {
         let button = Button::builder()
             .css_name("window-box")
             .css_classes(["bar-button"])
@@ -73,13 +76,14 @@ impl WindowTile {
             .build();
         let contents = Box::new(Orientation::Horizontal, 6);
         let icon = Image::builder()
-            .file(format!("assets/apps/{}.svg", window.class))
+            .gicon(&icons.resolve(&window.class))
             .css_name("icon-image")
             .pixel_size(18)
             .build();
-        let label = crate::task_label(&window.name);
+        let label = Marquee::new(crate::task_label(window.caption()), Mode::Hover);
+        label.track_hover(&button);
         contents.append(&icon);
-        contents.append(&label);
+        contents.append(label.widget());
         button.set_child(Some(&contents));
         let address = window.address.clone();
         button.connect_clicked(move |_| {
@@ -94,12 +98,12 @@ impl WindowTile {
         }
     }
 
-    fn update(&mut self, window: &Window, active: bool) {
-        self.label.set_text(&window.name);
+    fn update(&mut self, window: &Window, active: bool, icons: &mut icons::Resolver) {
+        self.label.set_text(window.caption());
         let tooltip = if window.urgent {
-            format!("{}\nNeeds attention", window.info)
+            format!("{}\nNeeds attention", window.caption())
         } else {
-            window.info.clone()
+            window.caption().to_string()
         };
         self.button.set_tooltip_text(Some(&tooltip));
         theme::set_urgent(&self.button, window.urgent);
@@ -109,8 +113,7 @@ impl WindowTile {
             self.button.remove_css_class("active");
         }
         if self.class != window.class {
-            self.icon
-                .set_from_file(Some(format!("assets/apps/{}.svg", window.class)));
+            self.icon.set_from_gicon(&icons.resolve(&window.class));
             self.class.clone_from(&window.class);
         }
     }
@@ -142,11 +145,13 @@ struct Entry {
 struct State {
     entries: BTreeMap<Key, Entry>,
     ticking: bool,
+    icons: icons::Resolver,
 }
 
 pub struct Tasks {
     fixed: Fixed,
     state: Rc<RefCell<State>>,
+    _app_monitor: gio::AppInfoMonitor,
 }
 
 impl Tasks {
@@ -159,7 +164,26 @@ impl Tasks {
         let state = Rc::new(RefCell::new(State::default()));
         let map_state = state.clone();
         fixed.connect_map(move |fixed| start(fixed, &map_state));
-        let tasks = Self { fixed, state };
+        let app_monitor = gio::AppInfoMonitor::get();
+        let changed_state = Rc::downgrade(&state);
+        app_monitor.connect_changed(move |_| {
+            if let Some(state) = changed_state.upgrade() {
+                refresh_icons(&state);
+            }
+        });
+        let changed_state = Rc::downgrade(&state);
+        gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap()).connect_changed(
+            move |_| {
+                if let Some(state) = changed_state.upgrade() {
+                    refresh_icons(&state);
+                }
+            },
+        );
+        let tasks = Self {
+            fixed,
+            state,
+            _app_monitor: app_monitor,
+        };
         tasks.update(workspaces);
         tasks
     }
@@ -182,6 +206,7 @@ impl Tasks {
     fn update_at(&self, workspaces: &Workspaces, now: i64, animate: bool) -> bool {
         let mut ordered: Vec<_> = workspaces.values().collect();
         ordered.sort_by_key(|workspace| workspace.order);
+        let first_tag = ordered.first().map(|workspace| workspace.tag);
         let mut items = Vec::new();
         for workspace in ordered {
             items.push(Item::Tag(workspace.tag));
@@ -209,8 +234,9 @@ impl Tasks {
             }
             let key = item.key();
             keep.insert(key.clone());
-            let entry = state.entries.entry(key).or_insert_with(|| {
-                let tile = item.create();
+            let State { entries, icons, .. } = &mut *state;
+            let entry = entries.entry(key).or_insert_with(|| {
+                let tile = item.create(icons);
                 tile.widget().set_height_request(HEIGHT);
                 self.fixed.put(tile.widget(), x, 0.0);
                 Entry {
@@ -225,10 +251,15 @@ impl Tasks {
                 }
             });
             if let (Item::Window(window, active), Tile::Window(tile)) = (&item, &mut entry.tile) {
-                tile.update(window, *active);
+                tile.update(window, *active, icons);
             }
             if let (Item::Tag(tag), Tile::Tag(label)) = (&item, &entry.tile) {
                 let workspace = &workspaces[tag];
+                if Some(*tag) == first_tag {
+                    label.add_css_class("first-group");
+                } else {
+                    label.remove_css_class("first-group");
+                }
                 theme::set_urgent(label, workspace.urgent());
                 label.set_tooltip_text(workspace.urgent().then(|| workspace.tooltip()).as_deref());
             }
@@ -265,6 +296,17 @@ impl Tasks {
         // Hold the full content width during swaps instead of resizing with each moving tile.
         self.fixed.set_size_request(x.ceil() as i32, HEIGHT);
         advance(&self.fixed, &mut state, now, animate)
+    }
+}
+
+fn refresh_icons(state: &Rc<RefCell<State>>) {
+    let mut state = state.borrow_mut();
+    let State { entries, icons, .. } = &mut *state;
+    icons.refresh();
+    for entry in entries.values_mut() {
+        if let Tile::Window(tile) = &entry.tile {
+            tile.icon.set_from_gicon(&icons.resolve(&tile.class));
+        }
     }
 }
 
@@ -332,6 +374,14 @@ pub(crate) fn assert_widgets() {
         ),
     ]);
     let tasks = Tasks::new(&initial);
+    assert!(tasks.state.borrow().entries[&Key::Tag(1)]
+        .tile
+        .widget()
+        .has_css_class("first-group"));
+    assert!(!tasks.state.borrow().entries[&Key::Tag(2)]
+        .tile
+        .widget()
+        .has_css_class("first-group"));
     let panel = Box::builder().css_name("bottom-bar").build();
     let scroller = crate::task_scroller(tasks.widget());
     panel.append(&scroller);
@@ -343,11 +393,11 @@ pub(crate) fn assert_widgets() {
         for entry in tasks.state.borrow().entries.values() {
             if let Tile::Window(tile) = &entry.tile {
                 assert!(
-                    !tile.label.layout().is_ellipsized(),
+                    !tile.label.label().layout().is_ellipsized(),
                     "short title {:?} was clipped: button={}px, label={}px",
-                    tile.label.text(),
+                    tile.label.label().text(),
                     tile.button.width(),
-                    tile.label.width()
+                    tile.label.widget().width()
                 );
             }
         }
@@ -384,6 +434,14 @@ pub(crate) fn assert_widgets() {
         ),
     ]);
     assert!(tasks.update_at(&switched, 1, true));
+    assert!(tasks.state.borrow().entries[&Key::Tag(2)]
+        .tile
+        .widget()
+        .has_css_class("first-group"));
+    assert!(!tasks.state.borrow().entries[&Key::Tag(1)]
+        .tile
+        .widget()
+        .has_css_class("first-group"));
     assert_eq!(
         tasks.widget().last_child().unwrap().widget_name(),
         "c",
@@ -445,8 +503,8 @@ pub(crate) fn assert_widgets() {
         old_x
     );
     let mut updated = initial;
-    updated.get_mut(&1).unwrap().windows[0].name = "Updated title".into();
-    updated.get_mut(&1).unwrap().windows[0].info = "Updated tooltip".into();
+    updated.get_mut(&1).unwrap().windows[0].name = "Stale startup title".into();
+    updated.get_mut(&1).unwrap().windows[0].info = "Updated title".into();
     tasks.update_at(&updated, 400_000, false);
     panel.allocate(width, height, -1, None);
     assert_readable_titles(&tasks);
@@ -454,15 +512,12 @@ pub(crate) fn assert_widgets() {
     let Tile::Window(tile) = &state.entries[&key].tile else {
         panic!("window tile expected")
     };
-    assert_eq!(tile.label.text(), "Updated title");
-    assert_eq!(
-        tile.button.tooltip_text().as_deref(),
-        Some("Updated tooltip")
-    );
+    assert_eq!(tile.label.label().text(), "Updated title");
+    assert_eq!(tile.button.tooltip_text().as_deref(), Some("Updated title"));
     assert!(tile.button.has_css_class("active"));
     assert_eq!(tile.button.upcast_ref::<Widget>(), &original);
     drop(state);
-    updated.get_mut(&1).unwrap().windows[0].name = "Long application title ".repeat(20);
+    updated.get_mut(&1).unwrap().windows[0].info = "Long application title ".repeat(20);
     tasks.update_at(&updated, 410_000, false);
     panel.allocate(width, height, -1, None);
     let long_width = original.width();
@@ -472,22 +527,29 @@ pub(crate) fn assert_widgets() {
             panic!("window tile expected")
         };
         assert!(
-            tile.label.layout().is_ellipsized(),
+            tile.label.label().layout().is_ellipsized(),
             "long titles must stay bounded"
         );
         assert!(
-            (100..=240).contains(&tile.label.width()),
+            (100..=240).contains(&tile.label.widget().width()),
             "long title has an incorrect allocation: {}px",
-            tile.label.width()
+            tile.label.widget().width()
         );
     }
-    updated.get_mut(&1).unwrap().windows[0].name = "X".into();
+    updated.get_mut(&1).unwrap().windows[0].info = "X".into();
     tasks.update_at(&updated, 420_000, false);
     panel.allocate(width, height, -1, None);
     assert_readable_titles(&tasks);
     assert!(
         original.width() < long_width,
         "a shortened title kept its previous width"
+    );
+    updated.get_mut(&1).unwrap().windows[0].info = " ".into();
+    tasks.update_at(&updated, 430_000, false);
+    assert_eq!(
+        original.tooltip_text().as_deref(),
+        Some("Stale startup title"),
+        "empty live titles must use the same fallback in captions and tooltips"
     );
     let mut moved = updated.get_mut(&1).unwrap().windows.remove(0);
     moved.tag = 2;
@@ -549,8 +611,19 @@ pub(crate) fn assert_widgets() {
     crate::tests::assert_attention_background(&button);
     crate::tests::assert_attention_background(&tag);
     assert_eq!(tag.color(), gtk::gdk::RGBA::parse("#703900").unwrap());
-    let title = button.first_child().unwrap().last_child().unwrap();
-    assert_eq!(title.color(), gtk::gdk::RGBA::parse("#703900").unwrap());
+    let title = button
+        .first_child()
+        .unwrap()
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Overlay>()
+        .unwrap();
+    for label in [
+        title.child().unwrap(),
+        title.last_child().unwrap().first_child().unwrap(),
+    ] {
+        assert_eq!(label.color(), gtk::gdk::RGBA::parse("#703900").unwrap());
+    }
     assert_eq!(
         button.tooltip_text().as_deref(),
         Some("b tooltip\nNeeds attention")

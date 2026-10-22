@@ -30,6 +30,7 @@
 
     buildInputs = with pkgs; [
       adwaita-icon-theme
+      papirus-icon-theme
       dbus
       glib
       pango
@@ -49,11 +50,14 @@
     postInstall = ''
       mkdir -p $out/share/epic-bar-rs/themes
       cp themes/*.css $out/share/epic-bar-rs/themes/
+      mkdir -p $out/share/epic-bar-rs/assets
+      cp -r assets/apps $out/share/epic-bar-rs/assets/
     '';
 
     preFixup = ''
-      gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw ]})
+      gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw pkgs.iproute2 ]})
       gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share)
+      gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.papirus-icon-theme}/share)
     '';
 
   };

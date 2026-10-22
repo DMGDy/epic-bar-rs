@@ -23,7 +23,11 @@ use gtk::{
 
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
+mod icons;
+mod marquee;
+mod media;
 mod network;
+mod panels;
 mod selection;
 mod status;
 mod tasks;
@@ -233,6 +237,8 @@ fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
     mem_container.append(&mem_icon);
     mem_container.append(&mem_label);
     mem_container.append(&mem_detail_label);
+    let memory_popup = panels::Usage::new(&mem_container, "Memory usage", "memory-history");
+    let cpu_popup = panels::Usage::new(&cpu_container, "CPU usage", "cpu-history");
 
     if has {
         battery_container.append(&battery_image);
@@ -241,8 +247,8 @@ fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
 
     status_container.append(&status_reveal_button);
     status_container.append(&net_container);
-    status_container.append(&cpu_container);
-    status_container.append(&mem_container);
+    status_container.append(&cpu_popup.button);
+    status_container.append(&memory_popup.button);
     if has {
         status_container.append(&battery_container);
     }
@@ -262,7 +268,10 @@ fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
     populate_workspace_box(&workspace_container, ws);
 
     let workspace_selection = selection::Selection::new(&workspace_container);
+    let media = media::Media::new();
+    media.start();
     main_container.append(workspace_selection.widget());
+    main_container.append(&media.widget);
     main_container.append(&spacer);
     main_container.append(&status_container);
     main_container.append(&date_container);
@@ -352,6 +361,7 @@ fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
                 .map_or(StatusLevel::Warning, StatusLevel::memory),
             "drive-harddisk-symbolic",
         );
+        memory_popup.update(memory.used_percent, &format!("Memory: {}", memory.string));
 
         if cpu_label.is_visible() {
             cpu_label.set_text(&Cpu::get_avg_freq());
@@ -359,6 +369,10 @@ fn top_bar(app: &Application, ws: &Workspaces) -> (Box, selection::Selection) {
         let cpu_load = cpu.get_cpu_load();
         cpu_load_label.set_text(&format!("{:.0}%", cpu_load));
         cpu_container.set_tooltip_text(Some(&format!("CPU usage: {cpu_load:.1}%")));
+        cpu_popup.update(
+            Some(f64::from(cpu_load)),
+            &format!("CPU usage: {cpu_load:.1}%"),
+        );
         update_status(
             &cpu_container,
             &cpu_image,
@@ -411,7 +425,7 @@ fn update_networks(
                     network::Kind::Wireless => "wireless",
                     network::Kind::Offline => "offline",
                 });
-                container.append(&entry);
+                container.append(&panels::network(&entry, network));
             }
         }
         Err(error) => {
@@ -441,7 +455,7 @@ fn workspace_button(tag: usize) -> Button {
     button
 }
 
-fn clock_button(date: &Label, time: &Label) -> Button {
+fn clock_button(date: &Label, time: &Label) -> gtk::MenuButton {
     date.set_xalign(1.0);
     time.set_xalign(1.0);
     let clock = Box::builder()
@@ -457,12 +471,9 @@ fn clock_button(date: &Label, time: &Label) -> Button {
         .build();
     contents.append(&status_icon("x-office-calendar-symbolic"));
     contents.append(&clock);
-    Button::builder()
-        .css_name("date-container")
-        .css_classes(["bar-button"])
-        .tooltip_text("Local date and time")
-        .child(&contents)
-        .build()
+    let button = panels::calendar(&contents);
+    button.set_tooltip_text(Some("Local date and time - click for calendar"));
+    button
 }
 
 fn metric_label(css_name: &str) -> Label {
@@ -824,12 +835,22 @@ mod tests {
             first.next_sibling().is_some(),
             "both active devices must be visible"
         );
-        assert_color(&first.first_child().unwrap(), "#0891b2");
+        let group = |widget: &gtk::Widget| {
+            widget
+                .clone()
+                .downcast::<gtk::MenuButton>()
+                .unwrap()
+                .child()
+                .unwrap()
+                .downcast::<Box>()
+                .unwrap()
+        };
+        assert_color(&group(&first).first_child().unwrap(), "#0891b2");
         assert_color(
-            &first.next_sibling().unwrap().first_child().unwrap(),
+            &group(&first.next_sibling().unwrap()).first_child().unwrap(),
             "#16a34a",
         );
-        assert_color(&first.last_child().unwrap(), "#634034");
+        assert_color(&group(&first).last_child().unwrap(), "#634034");
         update_networks(&area, &mut previous, Ok(networks.clone()));
         assert_eq!(
             area.first_child().as_ref(),
@@ -837,7 +858,8 @@ mod tests {
             "unchanged devices must retain their widgets"
         );
         update_networks(&area, &mut previous, Ok(vec![network::Network::default()]));
-        let offline = area.first_child().unwrap().downcast::<Box>().unwrap();
+        let offline_button = area.first_child().unwrap();
+        let offline = group(&offline_button);
         assert_eq!(
             offline
                 .last_child()
@@ -848,7 +870,7 @@ mod tests {
             "Offline"
         );
         assert!(
-            offline.next_sibling().is_none(),
+            offline_button.next_sibling().is_none(),
             "disconnected devices must disappear"
         );
         assert_color(&offline.first_child().unwrap(), "#64748b");
@@ -860,7 +882,7 @@ mod tests {
         assert_color(&error.last_child().unwrap(), "#703900");
         update_networks(&area, &mut previous, Ok(networks));
         assert_color(
-            &area.first_child().unwrap().first_child().unwrap(),
+            &group(&area.first_child().unwrap()).first_child().unwrap(),
             "#0891b2",
         );
 
@@ -918,6 +940,10 @@ mod tests {
         let title = task_contents
             .last_child()
             .unwrap()
+            .downcast::<gtk::Overlay>()
+            .unwrap()
+            .child()
+            .unwrap()
             .downcast::<Label>()
             .unwrap();
         let font_size = |label: &Label| label.pango_context().font_description().unwrap().size();
@@ -955,6 +981,8 @@ mod tests {
             task.tooltip_text().as_deref(),
             Some("Updated <b>title</b> & details")
         );
+        assert_eq!(title.text(), "Updated <b>title</b> & details");
+        assert!(!title.uses_markup());
         let mut moved = state.get_mut(&1).unwrap().windows.remove(0);
         moved.tag = 2;
         state.insert(
@@ -1261,6 +1289,10 @@ mod tests {
         }
         crate::selection::assert_widgets();
         crate::tasks::assert_widgets();
+        crate::icons::assert_widgets();
+        crate::panels::assert_widgets();
+        crate::media::assert_widgets();
+        crate::marquee::assert_widgets();
         assert_tooltip_styles();
     }
 }
