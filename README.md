@@ -74,7 +74,7 @@ The top and bottom bars target 48 px and 38 px respectively, with 16 px text,
 Top workspace buttons are full-height 47 px squares, flush with the top, bottom
 separator, and left edge of the bar without rounded-corner gaps. Bottom task labels and
 workspace tags use the same 16 px text size as the top bar.
-Hovering a top workspace lists its current window titles in recent-use order;
+Hovering a top workspace previews its last-seen image and lists current window titles in recent-use order;
 empty workspaces show "No open windows". The list refreshes with window opens,
 closes, title changes, and workspace moves. Titles are plain text, not markup.
 The active top-workspace highlight slides between buttons over 200 ms with
@@ -198,7 +198,65 @@ glyphs with an ellipsis when the title is only one pixel too wide.
 The popovers use opaque Autumn surfaces, cocoa text, peach selections, subtle
 borders/shadows, and the existing 16 px UI type.
 
-#### PipeWire volume assessment
+### Hover previews (experimental)
+
+The bars provide 320 x 180 hover popovers below top workspace buttons and above
+bottom window buttons, after a 400 ms delay.
+They do not request keyboard focus or take a modal grab. Moving into a popover
+keeps it open; leaving, clicking its source button, or removing that button
+closes it. Clicking anywhere in a workspace preview switches to that workspace,
+using the same action as its source button. Retry and scrollbar controls are
+excluded; window previews remain hover-only.
+Existing workspace/window clicks, hover marquees, urgency styling,
+and task widths remain unchanged. Workspace details retain the live window
+list, with scrolling for long lists.
+
+Window images come from native foreign-toplevel capture, matched by Hyprland's
+`stableId`, not mutable titles/classes or a crop of the visible monitor.
+They refresh at most once per second while hovered, including windows on
+inactive workspaces when the compositor permits capture.
+
+Workspaces use **last-seen**, not live inactive-workspace rendering. A single
+background worker samples currently visible, powered monitors every two seconds.
+Visiting a workspace prioritizes a capture of that workspace once its transition
+has settled, independently of the periodic timer. Hovering the active workspace
+also requests a fresh image if its cache is older than 500 ms. Its popup can
+briefly defer opening to let the capture finish, up to one second from hover,
+instead of opening over and cancelling the requested screenshot.
+There is no screenshot step in the workspace-switch handler and no capture to
+wait for before switching. The most recent completed image can therefore be a
+few seconds behind the workspace's final state. Never-captured workspaces show
+an explicit placeholder, and cached images show their age.
+
+Monitor snapshots exclude reserved bar areas and account for scale, rotation,
+and negative monitor coordinates. Captures pause while a preview is open and
+briefly after layout changes, avoiding recursive previews and transition frames.
+Special-workspace overlays are not saved as ordinary workspaces. Monitor-state
+checks and event generations discard stale results, including rapid
+switch-away-and-back sequences. Only one capture job runs at a time, with no
+unbounded request queue.
+
+Images stay in memory: no screenshots are written to disk. The shared LRU cache
+is limited to 32 images and 32 MiB of decoded pixel data; actual process/GPU memory
+includes GTK overhead. Closed/replaced window identities are discarded. The
+compositor's `locked` state is checked off-thread at roughly 500 ms intervals
+when idle, and before/after capture; locking clears images and closes previews.
+IPC failures/disconnection also clear images rather than displaying an
+unverified cache. Slow in-flight operations can delay detection, but capture
+never bypasses the compositor's lock or permission enforcement.
+
+Requires a recent Hyprland with `stableId`, `hyprctl -j locked`, and foreign
+toplevel image capture, plus **grim 1.5+** and GNU `timeout` in `PATH`.
+The Nix package supplies both, overriding only grim because the existing
+nixpkgs pin has grim 1.4.1; no broad nixpkgs update is needed. Each grim process
+has a two-second timeout. Capture failures appear in the popover and stderr;
+automatic screenshot retries pause until **Retry capture** is selected.
+Approve grim through the compositor's normal capture policy if prompted.
+Retrying a workspace closes its popover while the new capture runs; hover again
+to view the result. No capture permissions are changed, and background captures
+never switch workspaces.
+
+### PipeWire volume assessment
 
 A basic default-output volume/mute widget is moderate work and does not need a
 full mixer or PulseAudio compatibility. `wpctl` (WirePlumber tooling) can read

@@ -3,6 +3,7 @@ use std::{
     env,
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
+    time::Duration,
 };
 
 use serde::{de::Error as _, Deserialize};
@@ -27,7 +28,11 @@ pub enum HyprEvent {
 impl HyprEvent {
     fn parse(name: &str, data: &str) -> Option<Self> {
         match name {
-            "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" => Some(Self::Workspace),
+            "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" | "monitoradded"
+            | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2" | "configreloaded"
+            | "activespecial" | "activespecialv2" | "moveworkspace" | "moveworkspacev2" => {
+                Some(Self::Workspace)
+            }
             "activewindow" => Some(Self::ActiveWindow(None)),
             "activewindowv2" if data.is_empty() => Some(Self::ActiveWindow(None)),
             "activewindowv2" | "urgent" | "closewindow" => match parse_address(data) {
@@ -41,7 +46,7 @@ impl HyprEvent {
             },
             "windowtitle" | "windowtitlev2" => Some(Self::WindowTitle),
             "openwindow" => Some(Self::OpenWindow),
-            "movewindow" => Some(Self::MoveWindow),
+            "movewindow" | "movewindowv2" => Some(Self::MoveWindow),
             _ => None,
         }
     }
@@ -62,6 +67,14 @@ impl HyprEvent {
  * focused: actual compositor focus, which can differ from focus history
  * urgent: attention observed for this window since connecting
  */
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowPreview {
+    pub identifier: String,
+    pub width: u32,
+    pub height: u32,
+    pub monitor: i64,
+}
+
 pub struct Window {
     pub name: String,
     pub info: String,
@@ -71,6 +84,7 @@ pub struct Window {
     pub order: usize,
     pub focused: bool,
     pub urgent: bool,
+    pub preview: Option<WindowPreview>,
 }
 
 impl Window {
@@ -176,8 +190,12 @@ fn get_hyprland_sock(num: Option<&str>) -> io::Result<UnixStream> {
     ))
 }
 
-fn request(command: &str) -> Result<String, String> {
+pub(crate) fn request(command: &str) -> Result<String, String> {
     let mut socket = get_hyprland_sock(None).map_err(|error| error.to_string())?;
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .and_then(|_| socket.set_write_timeout(Some(Duration::from_secs(2))))
+        .map_err(|error| error.to_string())?;
     socket
         .write_all(command.as_bytes())
         .map_err(|error| error.to_string())?;
@@ -203,6 +221,12 @@ struct JsonClient {
     #[serde(rename = "focusHistoryID")]
     focus_history_id: i64,
     workspace: JsonWorkspaceRef,
+    #[serde(default, rename = "stableId")]
+    stable_id: Option<String>,
+    #[serde(default)]
+    size: Option<[u32; 2]>,
+    #[serde(default)]
+    monitor: i64,
 }
 
 #[derive(Deserialize)]
@@ -220,7 +244,7 @@ struct JsonActiveWindow {
     address: Option<String>,
 }
 
-fn get_windows() -> Result<Vec<Window>, String> {
+pub(crate) fn get_windows() -> Result<Vec<Window>, String> {
     let reply = request("j/clients")?;
     parse_windows(&reply).map_err(|error| format!("invalid Hyprland clients: {error}"))
 }
@@ -259,6 +283,22 @@ fn parse_windows(reply: &str) -> Result<Vec<Window>, serde_json::Error> {
         let address = parse_address(&client.address).ok_or_else(|| {
             serde_json::Error::custom(format!("invalid window address: {:?}", client.address))
         })?;
+        let preview = match (client.stable_id, client.size) {
+            (Some(identifier), Some([width, height])) if width > 0 && height > 0 => {
+                if parse_address(&identifier).as_deref() == Some(identifier.as_str()) {
+                    Some(WindowPreview {
+                        identifier,
+                        width,
+                        height,
+                        monitor: client.monitor,
+                    })
+                } else {
+                    eprintln!("epic-bar-rs: invalid window capture identifier: {identifier:?}");
+                    None
+                }
+            }
+            _ => None,
+        };
 
         all_windows.push(Window {
             name,
@@ -270,6 +310,7 @@ fn parse_windows(reply: &str) -> Result<Vec<Window>, serde_json::Error> {
             order: usize::try_from(client.focus_history_id).unwrap_or(usize::MAX),
             focused: false,
             urgent: false,
+            preview,
         });
     }
 
@@ -463,7 +504,8 @@ mod tests {
         let clients = parse_windows(
             r#"[
             {"address":"0xabc","title":"title with workspace: ID and\nnewlines","class":"kitty",
-             "initialTitle":"Terminal workspace: 5","focusHistoryID":0,"workspace":{"id":1}},
+             "initialTitle":"Terminal workspace: 5","focusHistoryID":0,"workspace":{"id":1},
+             "stableId":"180000af","size":[1264,662],"monitor":1},
             {"address":"0xdef","title":"Unfocused","class":"kitty",
              "initialTitle":"Other","focusHistoryID":-1,"workspace":{"id":2}},
             {"address":"0xfff","title":"Special","class":"kitty",
@@ -477,6 +519,16 @@ mod tests {
         assert_eq!(clients[0].name, "Terminal workspace: 5");
         assert_eq!(clients[0].info, "title with workspace: ID and\nnewlines");
         assert_eq!(clients[1].order, usize::MAX);
+        assert_eq!(
+            clients[0].preview,
+            Some(WindowPreview {
+                identifier: "180000af".into(),
+                width: 1264,
+                height: 662,
+                monitor: 1,
+            })
+        );
+        assert_eq!(clients[1].preview, None);
         assert!(parse_windows("not JSON").is_err());
     }
 

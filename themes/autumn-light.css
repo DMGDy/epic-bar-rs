@@ -283,6 +283,12 @@ date-container.status-popup {
     font-weight: 600;
 }
 
+.hover-preview .preview-image {
+    background-color: @autumn_surface;
+    border: 1px solid @autumn_border;
+    border-radius: 6px;
+}
+
 .bar-popover button {
     padding: 5px 8px;
     border-radius: 6px;
