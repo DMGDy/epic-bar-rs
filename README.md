@@ -59,15 +59,15 @@ Kitty/tmux palette. The former embedded stylesheet is preserved unchanged in
 `themes/windows-11-light.css`. The Autumn theme imports that stylesheet to keep
 its original font stack and refines its spacing, colors, and active indicators.
 
-### Status-bar experiment
+### Autumn status bars
 
-This branch merges `event-driven-updates`: one persistent, reconnecting Hyprland
-event stream updates both bars from the same JSON workspace snapshot, coalescing
+The merged `event-driven-updates` implementation uses one persistent, reconnecting
+Hyprland event stream to update both bars from the same JSON snapshot, coalescing
 event bursts instead of polling each bar separately. Runtime CPU-core detection
 and panic-free status reads are retained alongside the Autumn refinements.
 The current Lua dispatch syntax and reading dispatch replies are preserved.
 
-The `experiment/autumn-status-bars` branch keeps the warm-white background opaque
+The Autumn theme keeps the warm-white background opaque
 and replaces active-item glows with a peach fill and a 2 px red underline.
 The top and bottom bars target 48 px and 38 px respectively, with 16 px text,
 4 px workspace/status gaps, 12 px bottom workspace-group gaps, and 18 px icons.
@@ -149,6 +149,69 @@ a Dunst popup alone does not necessarily do so. The pinned Hyprland version
 does not include per-window urgency in its JSON snapshots, so attention is
 learned while the bar is connected, not recovered after a restart or for
 events missed during a connection outage.
+
+### Shell polish
+
+Shell polish builds on the Autumn bars and window attention support:
+
+- Application icons are resolved from desktop IDs and `StartupWMClass`, then
+  the current GTK icon theme (Papirus-Light on this desktop), bundled SVGs, and
+  a generic executable icon. Discovery is cached and refreshed when installed
+  applications or the icon theme change. The Nix package includes Papirus and
+  the bundled assets, so fallback icons do not depend on the launch directory.
+- Bottom workspace tags have subtle separators, except for the first group.
+  The existing gaps, square top buttons, measured task widths, and retained
+  shuffle/attention behavior are unchanged.
+- Clicking the stacked clock opens an anchored calendar with a Today button.
+  CPU and RAM each open a 60-sample history graph and min/average/max readout.
+  History starts when the bar starts; missing readings leave gaps.
+- Clicking an online network opens interface/SSID details, IPv4 and IPv6
+  addresses, MAC address, and IPv4 default gateways, with a Copy addresses
+  button. Details are read fresh on opening, off the GTK thread, using bounded
+  `ip` calls. Offline and error states are explicit. Popovers close with Escape
+  or an outside click and keep the compact bar geometry.
+- MPRIS media controls appear for playing or paused players and disappear when
+  all players stop or close. Playing players take precedence; otherwise the
+  current player is retained when possible. Previous, play/pause, and next
+  respect each player's capabilities. Titles have bounded widths and full
+  tooltips; overflowing titles scroll as described below. Owner/property signals
+  drive updates over Gio D-Bus, with bounded asynchronous calls and session-bus
+  reconnection; no `playerctl`, shell commands, or playback-position polling
+  are needed.
+
+Bottom task captions use the live window title, falling back to the startup
+title, window class, then "Untitled window". Existing PDF basename formatting is
+retained. The application icon identifies the app without adding another name
+prefix, and window-title events update the retained button in place.
+
+Overflowing media titles scroll continuously while visible (including paused
+players); overflowing bottom task titles scroll only while their button is
+hovered. Text moves at 32 px/s, pauses for one second at each end, then reverses
+without wrapping or jumping. Icons, controls, and button widths stay
+fixed. Only the original capped label contributes to layout, preserving natural
+short-title widths and task shuffling. Repeated snapshots with unchanged text
+do not reset scrolling. Changed text, hover exit, and unmapping reset it;
+reduced-motion settings disable scrolling and retain ellipsis/full tooltips.
+Even a one-pixel overflow starts scrolling: GTK can replace several trailing
+glyphs with an ellipsis when the title is only one pixel too wide.
+
+The popovers use opaque Autumn surfaces, cocoa text, peach selections, subtle
+borders/shadows, and the existing 16 px UI type.
+
+#### PipeWire volume assessment
+
+A basic default-output volume/mute widget is moderate work and does not need a
+full mixer or PulseAudio compatibility. `wpctl` (WirePlumber tooling) can read
+and control the default sink; `pw-dump --monitor` supplies native PipeWire
+node/metadata events. Both tools are already available on this workstation.
+The reliable implementation needs default-sink and hotplug tracking, recovery
+after PipeWire restarts, external volume/mute updates, and debounced slider
+writes that do not feed back into another write. Client-only events from its
+own `wpctl` processes must not trigger endless refreshes.
+
+Device selection, microphone controls, and per-application mixing would be
+additional scope. Volume support is assessment-only; no audio widget or audio
+settings changes are included.
 
 To select the saved theme, change `theme.css` to:
 
