@@ -54,8 +54,8 @@ impl HyprEvent {
 
 /* Window: metadata assoicated to an open window on hyprland
  *
- * name: the desktop name of the program
- * info: the secondary title or "information" of the window
+ * name: the initial window title, used as a fallback
+ * info: the current window title (PDF paths are shown as basenames)
  * pid: pid associated with the window open
  * tag: the workspace index th window exists on
  * order: focus history, with 0 meaning most recently focused
@@ -71,6 +71,16 @@ pub struct Window {
     pub order: usize,
     pub focused: bool,
     pub urgent: bool,
+}
+
+impl Window {
+    pub fn caption(&self) -> &str {
+        [&self.info, &self.name, &self.class]
+            .into_iter()
+            .map(|value| value.trim())
+            .find(|value| !value.is_empty())
+            .unwrap_or("Untitled window")
+    }
 }
 
 fn parse_address(value: &str) -> Option<String> {
@@ -138,13 +148,8 @@ impl Workspace {
             text.push_str("\nNo open windows");
         }
         for window in &self.windows {
-            let title = [&window.info, &window.name, &window.class]
-                .into_iter()
-                .map(|value| value.trim())
-                .find(|value| !value.is_empty())
-                .unwrap_or("Untitled window");
             text.push_str("\n- ");
-            text.push_str(title);
+            text.push_str(window.caption());
             if window.urgent {
                 text.push_str(" [needs attention]");
             }
@@ -428,10 +433,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
+            workspace
+                .windows
+                .iter()
+                .map(Window::caption)
+                .collect::<Vec<_>>(),
+            [
+                "Build <debug> & run",
+                "Kitty",
+                "org.editor",
+                "Untitled window"
+            ]
+        );
+        assert_eq!(
             workspace.tooltip(),
             "Workspace 3\n- Build <debug> & run\n- Kitty\n- org.editor\n- Untitled window"
         );
         workspace.windows[0].info = "Updated title".into();
+        assert_eq!(workspace.windows[0].caption(), "Updated title");
         workspace.windows.reverse();
         assert_eq!(
             workspace.tooltip(),

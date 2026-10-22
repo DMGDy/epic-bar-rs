@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use serde::Deserialize;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Kind {
     Wired,
@@ -206,11 +208,124 @@ fn fetch_ssid(iface: &str) -> io::Result<Option<String>> {
     Ok(parse_ssid(&String::from_utf8_lossy(&output.stdout)))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Details {
+    pub addresses: Vec<String>,
+    mac: Option<String>,
+    gateways: Vec<String>,
+}
+
+impl Details {
+    pub fn text(&self) -> String {
+        let addresses = if self.addresses.is_empty() {
+            "No IPv4/IPv6 addresses assigned".into()
+        } else {
+            self.addresses.join("\n")
+        };
+        let mut text = format!("Addresses\n{addresses}");
+        if let Some(mac) = &self.mac {
+            text.push_str(&format!("\n\nMAC: {mac}"));
+        }
+        text.push_str("\n\nIPv4 default gateway\n");
+        text.push_str(&if self.gateways.is_empty() {
+            "No default route".into()
+        } else {
+            self.gateways.join("\n")
+        });
+        text
+    }
+}
+
+#[derive(Deserialize)]
+struct AddressInfo {
+    local: String,
+    prefixlen: u8,
+}
+
+#[derive(Deserialize)]
+struct LinkInfo {
+    ifname: String,
+    address: Option<String>,
+    addr_info: Vec<AddressInfo>,
+}
+
+#[derive(Deserialize)]
+struct RouteInfo {
+    gateway: Option<String>,
+}
+
+pub fn read_details(iface: &str) -> Result<Details, String> {
+    let addresses = ip_json(&["-j", "address", "show", "dev", iface])?;
+    let routes = ip_json(&["-j", "-4", "route", "show", "default", "dev", iface])?;
+    parse_details(iface, &addresses, &routes)
+}
+
+fn ip_json(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("timeout")
+        .args(["--kill-after=1s", "2s", "ip"])
+        .args(args)
+        .output()
+        .map_err(|error| format!("cannot execute ip: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ip exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|error| format!("invalid ip output: {error}"))
+}
+
+fn parse_details(iface: &str, addresses: &str, routes: &str) -> Result<Details, String> {
+    let links: Vec<LinkInfo> = serde_json::from_str(addresses)
+        .map_err(|error| format!("invalid IP addresses: {error}"))?;
+    let link = links
+        .into_iter()
+        .find(|link| link.ifname == iface)
+        .ok_or_else(|| format!("interface {iface} is no longer available"))?;
+    let routes: Vec<RouteInfo> =
+        serde_json::from_str(routes).map_err(|error| format!("invalid default routes: {error}"))?;
+    Ok(Details {
+        addresses: link
+            .addr_info
+            .into_iter()
+            .map(|address| format!("{}/{}", address.local, address.prefixlen))
+            .collect(),
+        mac: link.address,
+        gateways: routes
+            .into_iter()
+            .map(|route| {
+                route
+                    .gateway
+                    .unwrap_or_else(|| "On-link (no gateway)".into())
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[test]
+    fn connection_details_include_both_address_families_and_explicit_route_state() {
+        let addresses = r#"[{"ifname":"eth0","address":"aa:bb:cc:dd:ee:ff","addr_info":[
+            {"local":"192.0.2.3","prefixlen":24},{"local":"2001:db8::3","prefixlen":64}]}]"#;
+        let details = parse_details("eth0", addresses, r#"[{"gateway":"192.0.2.1"}]"#).unwrap();
+        assert_eq!(details.addresses, ["192.0.2.3/24", "2001:db8::3/64"]);
+        assert!(details.text().contains("192.0.2.1"));
+        assert!(parse_details("eth0", addresses, "[]")
+            .unwrap()
+            .text()
+            .contains("No default route"));
+        assert!(parse_details("eth0", addresses, "[{}]")
+            .unwrap()
+            .text()
+            .contains("On-link"));
+        assert!(parse_details("missing", addresses, "[]").is_err());
+        assert!(parse_details("eth0", "invalid", "[]").is_err());
+    }
     #[test]
     fn route_selection_uses_the_lowest_metric_online_default() {
         let routes = "Iface Destination Gateway Flags RefCnt Use Metric Mask\n\
