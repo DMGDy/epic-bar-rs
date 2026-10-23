@@ -4,328 +4,207 @@
 
 :warning: **This is in development**: Currently the status bar I use every day
 
-![First progress image](sample/update2.png "Current State")
+![Earlier progress image](sample/update2.png "Earlier version of the bar")
 
+The screenshot is from an earlier version. The bar now uses the Autumn Light
+theme by default; the original Windows-style theme is still included.
 
-This aims to reimplement a bar using [Eww widgets](https://github.com/elkowar/eww) that I made myself 
-[here](https://github.com/DMGDy/eww-bar) as a standalone program using [GTK4](https://docs.gtk.org/gtk4/) 
-and [gtk-layer-shell](https://github.com/wmww/gtk-layer-shell). 
+This started as a standalone reimplementation of a bar using
+[Eww widgets](https://github.com/elkowar/eww) that I made
+[here](https://github.com/DMGDy/eww-bar). It now has a top workspace/status bar
+and a bottom task bar, using [GTK4](https://docs.gtk.org/gtk4/) and
+[gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell).
 
-This will only work on Hyprland as it primarily
-communicates through Hyprland IPC sockets.
+This will only work on Hyprland as it communicates through Hyprland IPC sockets.
+Workspace and window changes use one persistent connection shared by both bars;
+system information is updated separately.
 
-Additionally this uses ![Candy icons](https://github.com/EliverLara/candy-icons) and ![Kora](https://github.com/bikass/kora) for the images used in the bar (application icons,battery,RAM).
+Application icons come from desktop entries and the current icon theme, with
+bundled [Candy icons](https://github.com/EliverLara/candy-icons),
+[Kora](https://github.com/bikass/kora), and a generic icon as fallbacks.
+The Nix package also includes Papirus.
 
-All content is licensed under GPL-3.
+The bar's code is licensed under GPL-3. Bundled icons retain their upstream
+licenses.
+
+## What it shows
+
+The top bar has:
+
+* Workspaces 1-9, with an animated active-workspace indicator and click-to-switch.
+* Playing or paused MPRIS media, with previous, play/pause, and next controls.
+  Long track names scroll while the player is visible.
+* Online physical network interfaces, with the IPv4 default-route interface
+  first. Wi-Fi shows its SSID; clicking an interface opens addresses, gateways,
+  and a Copy addresses button.
+* CPU usage, RAM usage, and battery status when a battery is present. CPU and RAM
+  open short history graphs; the more button reveals CPU frequency and memory
+  capacity.
+* A stacked date and clock. Clicking it opens a calendar.
+
+The bottom bar shows open windows grouped by workspace, with application icons
+and live window titles. Clicking a window focuses it, including across
+workspaces. The groups and windows move into most-recently-used order rather
+than being rebuilt every time focus changes. Long window titles scroll on hover;
+the wheel or trackpad scrolls the task list when it does not fit.
+
+Windows requesting attention highlight their task button and workspace in amber
+until that window is focused or closed. This uses Hyprland's window-urgency
+events, not desktop notifications: a Dunst notification alone does not
+necessarily highlight anything. Attention missed while the bar is stopped or
+disconnected cannot be recovered from the current JSON snapshots.
+
+Animations and scrolling respect GTK's disabled-animation setting.
+
+### Hover previews
+
+Hovering a workspace or window opens a small image and details popup after a
+short delay. Moving into the popup keeps it open.
+
+Window previews use native toplevel capture, including windows on inactive
+workspaces when Hyprland allows it. They refresh at most once per second while
+hovered. Workspace previews are **last-seen images**, not live views of inactive
+workspaces. Visible workspaces are sampled in the background, with a priority
+capture after a visit and before opening a stale active-workspace preview.
+Switching workspaces never waits for a screenshot.
+
+Clicking a workspace preview switches there. Retry and scrollbar controls keep
+their own behavior; window previews are hover-only.
+
+Images stay in memory, with a shared limit of 32 images / 32 MiB of decoded
+pixels, and are cleared when the session locks or the IPC connection fails.
+Workspace captures pause while a preview is open to avoid capturing the popup
+itself. Errors appear in the popup and stderr; use **Retry capture** after
+addressing an error or a capture-permission prompt.
+
+Previews need a recent Hyprland with stable window IDs, lock-state queries, and
+foreign-toplevel image capture, plus `grim` 1.5 or newer and GNU `timeout`.
+The Nix package supplies the capture tools. No capture permissions are changed
+by the bar.
 
 ## Trying it out
-If you are on NixOS or using Nix on your system and using Hyprland you can try it out without cloning the repository
-by simply running the following if flake feature is enabled:
-```
+
+If you are on NixOS or using Nix on your system and using Hyprland, you can try
+it without cloning the repository if flakes are enabled:
+
+```sh
 nix run github:DMGDy/epic-bar-rs
 ```
-If flake is not enabled, clone repo and then:
-```
+
+If flakes are not enabled, clone the repo and then:
+
+```sh
 nix-build
 ./result/bin/epic-bar-rs
 ```
 
+Stop an existing instance before launching another build of the bar.
+
 ### Modifying and Rebuilding
-If you wanted to make changes to the source and rebuild with flake you can enter a development environment with:
-(note: both will run the Cargo project build)
-```
+
+To make changes with flakes, enter the development environment:
+
+```sh
 nix develop
+cargo run
 ```
-or without flake:
-```
+
+Or without flakes:
+
+```sh
 nix-shell
+cargo run
 ```
+
+Both development shells also build the Nix package when entering. For a release
+build or the normal tests:
+
+```sh
+cargo build --release --locked
+cargo test --locked
+```
+
+To build the packaged version with flakes:
+
+```sh
+nix build
+./result/bin/epic-bar-rs
+```
+
+Without Nix, you will need Rust 1.92 or newer, GTK 4.16 or newer,
+gtk4-layer-shell 1.0 or newer, and their development dependencies. `iw` is used for Wi-Fi
+SSIDs and `ip` for network details. Media controls use the session D-Bus directly;
+they do not need `playerctl`.
 
 ## Themes
 
-Themes are GTK CSS files, loaded once at startup for both bars. Editing a theme
-does not require recompiling; restart the bar to apply changes.
+Themes are GTK CSS files loaded at startup for both bars. Editing a theme does
+not require recompiling; restart the bar to apply it.
+
+The default Autumn Light theme uses warm-white panels, cocoa text, peach
+selections, red active indicators, and colored status icons. The top and bottom
+bars target 48 px and 38 px respectively, with 16 px text.
 
 The lookup order is:
 
-1. `EPIC_BAR_THEME`, when set (an explicit missing or invalid file is an error).
+1. `EPIC_BAR_THEME`, if set.
 2. `$XDG_CONFIG_HOME/epic-bar-rs/theme.css`, or `~/.config/epic-bar-rs/theme.css`.
 3. The installed `share/epic-bar-rs/themes/autumn-light.css`.
 4. `theme.css` in the current directory, for development.
 
-`theme.css` selects the high-contrast **Autumn Light** theme using a relative
-CSS import. It matches the warm white, saturated red, and cocoa colors in the
-Kitty/tmux palette. The former embedded stylesheet is preserved unchanged in
-`themes/windows-11-light.css`. The Autumn theme imports that stylesheet to keep
-its original font stack and refines its spacing, colors, and active indicators.
-
-### Autumn status bars
-
-The merged `event-driven-updates` implementation uses one persistent, reconnecting
-Hyprland event stream to update both bars from the same JSON snapshot, coalescing
-event bursts instead of polling each bar separately. Runtime CPU-core detection
-and panic-free status reads are retained alongside the Autumn refinements.
-The current Lua dispatch syntax and reading dispatch replies are preserved.
-
-The Autumn theme keeps the warm-white background opaque
-and replaces active-item glows with a peach fill and a 2 px red underline.
-The top and bottom bars target 48 px and 38 px respectively, with 16 px text,
-4 px workspace/status gaps, 12 px bottom workspace-group gaps, and 18 px icons.
-Top workspace buttons are full-height 47 px squares, flush with the top, bottom
-separator, and left edge of the bar without rounded-corner gaps. Bottom task labels and
-workspace tags use the same 16 px text size as the top bar.
-Hovering a top workspace previews its last-seen image and lists current window titles in recent-use order;
-empty workspaces show "No open windows". The list refreshes with window opens,
-closes, title changes, and workspace moves. Titles are plain text, not markup.
-The active top-workspace highlight slides between buttons over 200 ms with
-ease-out motion, continuing smoothly if another workspace is selected mid-slide.
-It follows real button positions, stops requesting frames when settled, and
-respects GTK's disabled-animation setting. The highlight reads the existing
-Autumn palette from runtime CSS; the saved Windows theme keeps its static highlight.
-
-The top bar contains workspaces, active network devices, compact CPU/memory/battery
-percentages, and a two-row clock with the date (`YYYY/MM/DD`) above the time
-(`HH:MM:SS`), preceded by a symbolic calendar icon. Both rows are right-aligned;
-the taller top bar keeps them unclipped.
-The more button toggles CPU frequency and used/total memory;
-full memory values are also available in tooltips. Numeric labels
-use tabular digits and natural text widths, without spare character slots or
-leading icon-to-value whitespace. Widths may change when the digit count changes;
-the fixed-format clock stays stable. The memory and calendar groups have a
-compact 4 px inter-group gap.
-System icons remain symbolic but use brighter colors independent of the Autumn
-palette: blue CPU, purple memory, cyan wired links, green Wi-Fi and battery,
-teal charging, pink calendar, and an orange more button. Checking/offline links
-are slate; warning icons turn amber and critical icons red. Metric text and
-alert backgrounds keep their existing Autumn colors. Application icons retain
-their original colors without individual background tiles.
-
-Network devices follow the feature from `event-driven-updates` (`fadfb6d`,
-`d85b608`): every physical interface with an up link and carrier is shown,
-excluding loopback and virtual/container interfaces. The IPv4 default-route
-device appears first, followed by other devices alphabetically. Wi-Fi shows its
-SSID when available, with the device name in its tooltip; wired links show their
-device names. Labels remain visible in the compact view, and long names are
-ellipsized with full values in tooltips.
-
-Network reads and SSID queries run off the GTK thread. Each wireless interface
-has its own 10-second SSID cache; packaged `iw` queries have a timeout. Unchanged
-device lists retain their widgets. No active links shows `Offline`; enumeration
-failures instead show `Network error` with details in the tooltip and stderr.
-
-Normal metrics use secondary brown. CPU usage warns at 85% and becomes critical
-at 95%; memory usage uses 80%/90%. A discharging battery warns at 20% and becomes
-critical at 10%. Warning/error icons accompany amber/red backgrounds, so alerts
-do not rely on color alone. Charging batteries do not trigger low-charge alerts.
-
-The bottom bar remains the task list. Buttons are retained by Hyprland window
-address: focus changes animate windows and workspace tags into their existing
-most-recently-used order over 200 ms, rather than rebuilding the entire strip.
-Rapid switches retarget from the visible positions; disabled GTK animations snap
-directly to the new order. Titles, icons, tooltips, and click handlers stay with
-their window when it changes position or workspace.
-Buttons reserve their measured icon/title width, remeasured as titles grow or
-shrink. Only long titles are ellipsized, with full window information in tooltips.
-Overflow scrolls horizontally using the wheel
-or trackpad, without adding a scrollbar or growing the panel.
-All Autumn tooltips use an explicit warm-white background, dark cocoa text,
-a subtle border, and 16 px text, independent of GTK's light/dark preference.
-
-Hyprland window-attention requests highlight the affected task button, its
-bottom workspace tag, and its top workspace square in amber. The highlight
-pulses twice over 1.2 seconds, then stays solid until that window receives
-focus or closes. GTK's disabled-animation setting uses a solid highlight
-immediately. The normal red active-workspace underline remains visible even
-when another window on that workspace needs attention.
-Window and workspace ordering do not change when attention arrives.
-Visiting a workspace only clears attention for the window that actually gains
-focus; other urgent windows keep their indicators. Highlights follow windows
-when they move, and tooltips identify windows that need attention.
-
-Attention uses the existing Hyprland event connection, including ordered
-per-window urgency/focus events when refreshes are coalesced, without polling.
-It is not a desktop-notification listener: apps must request window attention;
-a Dunst popup alone does not necessarily do so. The pinned Hyprland version
-does not include per-window urgency in its JSON snapshots, so attention is
-learned while the bar is connected, not recovered after a restart or for
-events missed during a connection outage.
-
-### Shell polish
-
-Shell polish builds on the Autumn bars and window attention support:
-
-- Application icons are resolved from desktop IDs and `StartupWMClass`, then
-  the current GTK icon theme (Papirus-Light on this desktop), bundled SVGs, and
-  a generic executable icon. Discovery is cached and refreshed when installed
-  applications or the icon theme change. The Nix package includes Papirus and
-  the bundled assets, so fallback icons do not depend on the launch directory.
-- Bottom workspace tags have subtle separators, except for the first group.
-  The existing gaps, square top buttons, measured task widths, and retained
-  shuffle/attention behavior are unchanged.
-- Clicking the stacked clock opens an anchored calendar with a Today button.
-  CPU and RAM each open a 60-sample history graph and min/average/max readout.
-  History starts when the bar starts; missing readings leave gaps.
-- Clicking an online network opens interface/SSID details, IPv4 and IPv6
-  addresses, MAC address, and IPv4 default gateways, with a Copy addresses
-  button. Details are read fresh on opening, off the GTK thread, using bounded
-  `ip` calls. Offline and error states are explicit. Popovers close with Escape
-  or an outside click and keep the compact bar geometry.
-- MPRIS media controls appear for playing or paused players and disappear when
-  all players stop or close. Playing players take precedence; otherwise the
-  current player is retained when possible. Previous, play/pause, and next
-  respect each player's capabilities. Titles have bounded widths and full
-  tooltips; overflowing titles scroll as described below. Owner/property signals
-  drive updates over Gio D-Bus, with bounded asynchronous calls and session-bus
-  reconnection; no `playerctl`, shell commands, or playback-position polling
-  are needed.
-
-Bottom task captions use the live window title, falling back to the startup
-title, window class, then "Untitled window". Existing PDF basename formatting is
-retained. The application icon identifies the app without adding another name
-prefix, and window-title events update the retained button in place.
-
-Overflowing media titles scroll continuously while visible (including paused
-players); overflowing bottom task titles scroll only while their button is
-hovered. Text moves at 32 px/s, pauses for one second at each end, then reverses
-without wrapping or jumping. Icons, controls, and button widths stay
-fixed. Only the original capped label contributes to layout, preserving natural
-short-title widths and task shuffling. Repeated snapshots with unchanged text
-do not reset scrolling. Changed text, hover exit, and unmapping reset it;
-reduced-motion settings disable scrolling and retain ellipsis/full tooltips.
-Even a one-pixel overflow starts scrolling: GTK can replace several trailing
-glyphs with an ellipsis when the title is only one pixel too wide.
-
-The popovers use opaque Autumn surfaces, cocoa text, peach selections, subtle
-borders/shadows, and the existing 16 px UI type.
-
-### Hover previews (experimental)
-
-The bars provide 320 x 180 hover popovers below top workspace buttons and above
-bottom window buttons, after a 400 ms delay.
-They do not request keyboard focus or take a modal grab. Moving into a popover
-keeps it open; leaving, clicking its source button, or removing that button
-closes it. Clicking anywhere in a workspace preview switches to that workspace,
-using the same action as its source button. Retry and scrollbar controls are
-excluded; window previews remain hover-only.
-Existing workspace/window clicks, hover marquees, urgency styling,
-and task widths remain unchanged. Workspace details retain the live window
-list, with scrolling for long lists.
-
-Window images come from native foreign-toplevel capture, matched by Hyprland's
-`stableId`, not mutable titles/classes or a crop of the visible monitor.
-They refresh at most once per second while hovered, including windows on
-inactive workspaces when the compositor permits capture.
-
-Workspaces use **last-seen**, not live inactive-workspace rendering. A single
-background worker samples currently visible, powered monitors every two seconds.
-Visiting a workspace prioritizes a capture of that workspace once its transition
-has settled, independently of the periodic timer. Hovering the active workspace
-also requests a fresh image if its cache is older than 500 ms. Its popup can
-briefly defer opening to let the capture finish, up to one second from hover,
-instead of opening over and cancelling the requested screenshot.
-There is no screenshot step in the workspace-switch handler and no capture to
-wait for before switching. The most recent completed image can therefore be a
-few seconds behind the workspace's final state. Never-captured workspaces show
-an explicit placeholder, and cached images show their age.
-
-Monitor snapshots exclude reserved bar areas and account for scale, rotation,
-and negative monitor coordinates. Captures pause while a preview is open and
-briefly after layout changes, avoiding recursive previews and transition frames.
-Special-workspace overlays are not saved as ordinary workspaces. Monitor-state
-checks and event generations discard stale results, including rapid
-switch-away-and-back sequences. Only one capture job runs at a time, with no
-unbounded request queue.
-
-Images stay in memory: no screenshots are written to disk. The shared LRU cache
-is limited to 32 images and 32 MiB of decoded pixel data; actual process/GPU memory
-includes GTK overhead. Closed/replaced window identities are discarded. The
-compositor's `locked` state is checked off-thread at roughly 500 ms intervals
-when idle, and before/after capture; locking clears images and closes previews.
-IPC failures/disconnection also clear images rather than displaying an
-unverified cache. Slow in-flight operations can delay detection, but capture
-never bypasses the compositor's lock or permission enforcement.
-
-Requires a recent Hyprland with `stableId`, `hyprctl -j locked`, and foreign
-toplevel image capture, plus **grim 1.5+** and GNU `timeout` in `PATH`.
-The Nix package supplies both, overriding only grim because the existing
-nixpkgs pin has grim 1.4.1; no broad nixpkgs update is needed. Each grim process
-has a two-second timeout. Capture failures appear in the popover and stderr;
-automatic screenshot retries pause until **Retry capture** is selected.
-Approve grim through the compositor's normal capture policy if prompted.
-Retrying a workspace closes its popover while the new capture runs; hover again
-to view the result. No capture permissions are changed, and background captures
-never switch workspaces.
-
-### PipeWire volume assessment
-
-A basic default-output volume/mute widget is moderate work and does not need a
-full mixer or PulseAudio compatibility. `wpctl` (WirePlumber tooling) can read
-and control the default sink; `pw-dump --monitor` supplies native PipeWire
-node/metadata events. Both tools are already available on this workstation.
-The reliable implementation needs default-sink and hotplug tracking, recovery
-after PipeWire restarts, external volume/mute updates, and debounced slider
-writes that do not feed back into another write. Client-only events from its
-own `wpctl` processes must not trigger endless refreshes.
-
-Device selection, microphone controls, and per-application mixing would be
-additional scope. Volume support is assessment-only; no audio widget or audio
-settings changes are included.
-
-To select the saved theme, change `theme.css` to:
+The repo's `theme.css` selects Autumn Light. To use the saved Windows-style theme
+from the repo, change it to:
 
 ```css
 @import url("themes/windows-11-light.css");
 ```
 
-Alternatively, choose a file for one launch:
+Or select a theme for one launch:
 
 ```sh
 EPIC_BAR_THEME="$PWD/themes/windows-11-light.css" ./target/release/epic-bar-rs
 ```
 
-Relative imports resolve against the CSS file's directory. Unreadable files,
-invalid CSS, and missing imports are reported on stderr and stop startup rather
-than silently falling back to another theme.
+Relative imports resolve against the CSS file's directory. An explicit missing
+file, invalid CSS, or a missing import stops startup with an error instead of
+silently selecting another theme.
 
 ## why?
 
-Most of the modules and behavior of what the bar should show has been implemented already through 
-several compiled tools (although specifically for the the Eww widgets), so naturally I would like 
-to implement all of it on its own. Here are the tools that generate Eww code to dynamically show widgets/
-show system information:
+Most of what I wanted the bar to show was already implemented through several
+compiled tools for the Eww widgets, so naturally I wanted to implement it on its
+own. These are the tools that generated the Eww code and system information:
 
 * [workspaces](https://github.com/DMGDy/eww-workspaces)
 * [statuses](https://github.com/DMGDy/statuses)
 * [more statuses (in Rust)](https://github.com/DMGDy/statuses-rs)
 * [Open windows in workspaces](https://github.com/DMGDy/eww-windows)
 
-I previously relied on Rust crates to obtain information such as Netowrk and Wi-fi information but 
-~~I will plan on simply using D-bus to interact with these services.~~
-Interacting with Netlink IPC socket to get network information would be much more direct
-and fast.
+I previously relied on Rust crates for network and Wi-Fi information. The bar
+now reads interface and route information from `/sys` and `/proc`, with bounded
+`iw` and `ip` calls for the details. Direct Netlink interaction is still something
+I would like to look at.
 
 ## TO-DO
-Things to do in order of priority: 
 
-1. [X] Have workspaces visible, differentiating active status
-    1. [X] Clickable to switch to workspace
-2. [ ] Show basic system information
-    1. [X] Battery status
-    2. [X] Calendar
-    3. [ ] WiFi + WiFi Strength/SSID
-    4. [X] RAM 
-    5. [X] CPU
-        1. [X] Average load through `/stat/proc`
-        2. [X] Frequency accross CPUs averaged from `/sys/devices/system/cpu/cpuX/cpufreq/scaling_cur_freq`
-    6. [ ] Volume (maybe most difficult)
-3. [ ] Clickeable icon (Functionality TBD)
-4. [X] Show open windows across different workspaces (Bottom bar or integrated in seperator of top bar)
-    1. [X] With Icons
-5. [X] Change colors and fonts using runtime CSS theme files
-6. [ ] Stop using `.unwrap()` and implement propper error handling (default values, fallback behavior/values)
+* [X] Workspaces and open windows, with click-to-switch and application icons
+* [X] Battery, CPU, RAM, date, and calendar
+* [X] Active network interfaces and Wi-Fi SSIDs
+* [X] Calendar, system-history, and network-detail popups
+* [X] MPRIS controls and scrolling track/window titles
+* [X] Window-attention highlighting
+* [X] Window and last-seen workspace previews
+* [X] Runtime CSS themes
+* [ ] Wi-Fi signal strength
+* [ ] PipeWire volume/mute controls
+* [ ] Proper multi-monitor placement and output-hotplug handling
+* [ ] Continue improving error handling
 
 ## Known Issues
-* Only expects and appears on a single display
-* If display is turned off and on, bar is no longer present but process still running
-* ghostty has no current icons
-    * need to properly create submodules of assets rather than coppying the files...
+
+* Only one pair of bars is created, rather than one per display.
+* Turning a display off and on can require restarting the bar.
+* Preview support depends on Hyprland's capture protocols and permissions.
+  An inactive workspace without a cached image has no workspace preview yet.
+* App-icon matching depends on desktop files and the icon theme; unmatched
+  applications use the bundled or generic fallback.
