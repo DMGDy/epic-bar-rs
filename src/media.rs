@@ -166,29 +166,29 @@ async fn control(connection: &gio::DBusConnection, name: &str, method: &str) -> 
 fn subscribe(
     connection: &gio::DBusConnection,
     tx: &async_channel::Sender<()>,
-) -> Vec<gio::SignalSubscriptionId> {
+) -> Vec<gio::SignalSubscription> {
     let changed = tx.clone();
-    let properties = connection.signal_subscribe(
+    let properties = connection.subscribe_to_signal(
         None,
         Some("org.freedesktop.DBus.Properties"),
         Some("PropertiesChanged"),
         Some(PATH),
         Some(PLAYER),
         gio::DBusSignalFlags::NONE,
-        move |_, _, _, _, _, _| {
+        move |_| {
             let _ = changed.try_send(());
         },
     );
     let changed = tx.clone();
-    let owners = connection.signal_subscribe(
+    let owners = connection.subscribe_to_signal(
         Some(BUS),
         Some(BUS),
         Some("NameOwnerChanged"),
         Some("/org/freedesktop/DBus"),
         None,
         gio::DBusSignalFlags::NONE,
-        move |_, _, _, _, _, parameters| {
-            if let Some((name, _, _)) = parameters.get::<(String, String, String)>() {
+        move |signal| {
+            if let Some((name, _, _)) = signal.parameters.get::<(String, String, String)>() {
                 if name.starts_with(PREFIX) {
                     let _ = changed.try_send(());
                 }
@@ -378,9 +378,7 @@ impl Media {
                         }
                     }
                 }
-                for subscription in subscriptions {
-                    connection.signal_unsubscribe(subscription);
-                }
+                drop(subscriptions);
                 connection.disconnect(closed);
                 *media.connection.borrow_mut() = None;
                 media.error("Session bus disconnected; reconnecting");
@@ -540,9 +538,23 @@ mod tests {
                 .unwrap();
             assert!(scan(&connection).await.unwrap().is_empty());
             assert!(control(&connection, name, "PlayPause").await.is_err());
-            for subscription in subscriptions {
-                connection.signal_unsubscribe(subscription);
-            }
+            drop(subscriptions);
+            connection
+                .emit_signal(
+                    None,
+                    PATH,
+                    "org.freedesktop.DBus.Properties",
+                    "PropertiesChanged",
+                    Some(&(PLAYER, data.borrow().clone(), Vec::<String>::new()).to_variant()),
+                )
+                .unwrap();
+            connection.flush_future().await.unwrap();
+            assert!(
+                glib::future_with_timeout(std::time::Duration::from_millis(50), rx.recv())
+                    .await
+                    .is_err(),
+                "dropping subscriptions must stop media refresh events"
+            );
             connection.unregister_object(registration).unwrap();
         });
     }

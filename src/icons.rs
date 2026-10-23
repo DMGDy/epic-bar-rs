@@ -1,9 +1,10 @@
 use std::{collections::BTreeMap, env, path::PathBuf};
 
+use gio_unix::DesktopAppInfo;
 use gtk::{gio, prelude::*, IconTheme};
 
 pub struct Resolver {
-    apps: Vec<gio::DesktopAppInfo>,
+    apps: Vec<DesktopAppInfo>,
     cache: BTreeMap<String, gio::Icon>,
     theme: IconTheme,
     roots: Vec<PathBuf>,
@@ -101,10 +102,10 @@ fn safe_class(class: &str) -> bool {
     !class.is_empty() && !class.contains(['/', '\\']) && class != "." && class != ".."
 }
 
-fn desktop_apps() -> Vec<gio::DesktopAppInfo> {
+fn desktop_apps() -> Vec<DesktopAppInfo> {
     let mut apps: Vec<_> = gio::AppInfo::all()
         .into_iter()
-        .filter_map(|app| app.downcast::<gio::DesktopAppInfo>().ok())
+        .filter_map(|app| app.downcast::<DesktopAppInfo>().ok())
         .collect();
     apps.sort_by_key(|app| app.id());
     apps
@@ -154,7 +155,7 @@ pub(crate) fn assert_widgets() {
         "[Desktop Entry]\nType=Application\nName=Fixture\nExec=true\nStartupWMClass=EpicBarIconFixture\nIcon=utilities-terminal-symbolic\n",
         gtk::glib::KeyFileFlags::NONE,
     ).unwrap();
-    resolver.apps = vec![gio::DesktopAppInfo::from_keyfile(&key_file).unwrap()];
+    resolver.apps = vec![DesktopAppInfo::from_keyfile(&key_file).unwrap()];
     let icon = resolver.resolve("epicbariconfixture");
     assert_eq!(
         icon.downcast_ref::<gio::ThemedIcon>().unwrap().names()[0],
@@ -163,7 +164,7 @@ pub(crate) fn assert_widgets() {
     assert_eq!(resolver.cache.len(), 1);
     assert_eq!(resolver.resolve("epicbariconfixture"), icon);
     key_file.set_string("Desktop Entry", "StartupWMClass", "");
-    resolver.apps = vec![gio::DesktopAppInfo::from_keyfile(&key_file).unwrap()];
+    resolver.apps = vec![DesktopAppInfo::from_keyfile(&key_file).unwrap()];
     let unnamed = resolver.resolve("");
     assert_eq!(
         unnamed.downcast_ref::<gio::ThemedIcon>().unwrap().names()[0],
@@ -184,7 +185,7 @@ pub(crate) fn assert_widgets() {
     let bundled = root.join("EpicBarBundledFixture.svg");
     std::fs::write(&desktop, "[Desktop Entry]\nType=Application\nName=Fixture\nExec=true\nStartupWMClass=DifferentClass\nIcon=utilities-terminal-symbolic\n").unwrap();
     std::fs::write(&bundled, r#"<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"><rect width="18" height="18"/></svg>"#).unwrap();
-    let app = gio::DesktopAppInfo::from_filename(&desktop).unwrap();
+    let app = DesktopAppInfo::from_filename(&desktop).unwrap();
     let id = app.id().unwrap();
     resolver.apps = vec![app];
     resolver.cache.clear();

@@ -384,13 +384,13 @@ pub fn get_battery_info() -> Battery {
 
 fn get_date(dt: &OffsetDateTime) -> String {
     let date = dt.date();
-    let format = format_description::parse("[year]/[month]/[day]").unwrap();
+    let format = format_description::parse_borrowed::<1>("[year]/[month]/[day]").unwrap();
     date.format(&format).unwrap()
 }
 
 fn get_time(dt: &OffsetDateTime) -> String {
     let time = dt.time();
-    let format = format_description::parse("[hour]:[minute]:[second]").unwrap();
+    let format = format_description::parse_borrowed::<1>("[hour]:[minute]:[second]").unwrap();
     time.format(&format).unwrap()
 }
 
@@ -462,6 +462,17 @@ fn parse_memory(contents: &str) -> Result<Memory, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_format_keeps_zero_padded_date_and_time() {
+        let dt = time::Date::from_calendar_date(2026, time::Month::October, 2)
+            .unwrap()
+            .with_hms(7, 6, 9)
+            .unwrap()
+            .assume_utc();
+        assert_eq!(get_date(&dt), "2026/10/02");
+        assert_eq!(get_time(&dt), "07:06:09");
+    }
 
     #[test]
     fn cpu_counters_are_not_truncated_or_limited_to_u32() {

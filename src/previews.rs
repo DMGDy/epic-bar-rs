@@ -1109,7 +1109,7 @@ fn assert_mapped_popup(button: &Button, preview: &HoverPreview, natural_width: i
         .child(button)
         .build();
     LayerShell::init_layer_shell(&root);
-    LayerShell::set_namespace(&root, "epic-bar-preview-test");
+    LayerShell::set_namespace(&root, Some("epic-bar-preview-test"));
     LayerShell::set_layer(&root, Layer::Background);
     LayerShell::set_keyboard_mode(&root, KeyboardMode::None);
     preview.popup.popover.set_opacity(0.0);
