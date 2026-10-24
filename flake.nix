@@ -60,6 +60,8 @@
 
     preFixup = ''
       gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.iw pkgs.iproute2 pkgs.grim ]})
+      # Fallback for the volume module; a pactl already on PATH wins.
+      gappsWrapperArgs+=(--suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.pulseaudio ]})
       gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share)
       gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : ${pkgs.papirus-icon-theme}/share)
     '';
@@ -67,6 +69,8 @@
   };
   in {
     packages.${system}.default = epic-bar;
+    homeManagerModules.default = import ./nix/home-manager.nix self;
+    homeModules.default = self.homeManagerModules.default;
     devShells.${system}.default = pkgs.mkShell {
       buildInputs = with pkgs; [
         rustToolchain

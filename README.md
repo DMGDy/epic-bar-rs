@@ -29,18 +29,49 @@ licenses.
 
 ## What it shows
 
-The top bar has:
+Every display gets its own top bar and bottom task bar. Displays added or
+removed while the bar runs (docks, KVMs, a monitor turned off and on) get
+their bars rebuilt automatically.
 
-* Workspaces 1-9, with an animated active-workspace indicator and click-to-switch.
+Each display's bars show only that display's workspaces: the ones currently on
+it, the ones `outputs."<name>".workspaces` assigns to it in the config, and the
+ones Hyprland workspace rules (`monitor = "HDMI-A-1"`) bind to it. A display
+with no assignment at all also shows workspaces nobody else claims.
+
+The top bar can show, in any order (see [Configuration](#configuration)):
+
+* Workspaces 1-9 (or up to `workspaces`), with an animated active-workspace
+  indicator and click-to-switch. Each display highlights the workspace it shows.
 * Playing or paused MPRIS media, with previous, play/pause, and next controls.
   Long track names scroll while the player is visible.
+* The active Hyprland submap, while one is active.
+* A system tray (StatusNotifierItem). Left-click activates an item, middle-click
+  is its secondary action, right-click opens its menu, and scrolling is passed
+  through. The bar becomes the StatusNotifierWatcher if none is running, or
+  registers as a host with the existing one.
+* The keyboard layout, when the main keyboard has more than one. Click to switch.
 * Online physical network interfaces, with the IPv4 default-route interface
-  first. Wi-Fi shows its SSID; clicking an interface opens addresses, gateways,
-  and a Copy addresses button.
-* CPU usage, RAM usage, and battery status when a battery is present. CPU and RAM
-  open short history graphs; the more button reveals CPU frequency and memory
-  capacity.
+  first. Wi-Fi shows its SSID and signal strength; clicking an interface opens
+  addresses, gateways, and a Copy addresses button.
+* CPU usage and temperature, RAM usage, and battery status when a battery is
+  present. CPU and RAM open short history graphs; the more button reveals CPU
+  frequency, temperature, and memory capacity.
+* GPU usage, memory, and temperature with a history graph: NVIDIA through
+  `nvidia-smi`, AMD through amdgpu's sysfs files (APUs report shared GTT memory).
+* Backlight brightness on laptops. Scroll to change it; changes go through
+  logind, so no udev rule or setuid helper is needed.
+* PipeWire output volume through `pactl`. Scroll to change it, right-click to
+  mute, or click for a slider, mute button, and output-device picker.
+* Dunst notifications through `dunstctl`: do-not-disturb state and how many
+  notifications are showing, or waiting while do-not-disturb is on. Click to
+  toggle do-not-disturb, right-click to show the last notification again, and
+  middle-click to dismiss all.
 * A stacked date and clock. Clicking it opens a calendar.
+* A power menu: lock, suspend, log out, restart, and shut down. Log out, restart,
+  and shut down ask for a second click.
+
+Modules whose hardware or service is missing (no battery, backlight, GPU,
+`pactl`, or Dunst) hide themselves.
 
 The bottom bar shows open windows grouped by workspace, with application icons
 and live window titles. Clicking a window focuses it, including across
@@ -133,8 +164,110 @@ nix build
 
 Without Nix, you will need Rust 1.92 or newer, GTK 4.16 or newer,
 gtk4-layer-shell 1.0 or newer, and their development dependencies. `iw` is used for Wi-Fi
-SSIDs and `ip` for network details. Media controls use the session D-Bus directly;
+SSIDs and signal strength, and `ip` for network details. The volume module
+needs `pactl` (PipeWire's PulseAudio server), notifications need `dunstctl`, and
+NVIDIA GPU stats need `nvidia-smi`. Media controls use the session D-Bus directly;
 they do not need `playerctl`.
+
+## Configuration
+
+The bar runs with built-in defaults. To change them, create a TOML file; the
+first match wins:
+
+1. `EPIC_BAR_CONFIG`, if set.
+2. `$XDG_CONFIG_HOME/epic-bar-rs/config.toml`, or `~/.config/epic-bar-rs/config.toml`.
+
+An explicitly named file that is missing, unknown keys, and invalid values stop
+startup with an error. Every key is optional:
+
+```toml
+# Workspace buttons 1..=workspaces (1-99).
+workspaces = 10
+
+# Steps for scrolling on the volume and brightness modules, in percent.
+volume_step = 5
+brightness_step = 5
+
+[bar]
+# Modules: workspaces, media, submap, tray, more, keyboard, network, cpu,
+# memory, gpu, battery, brightness, volume, notifications, clock, power.
+left = ["workspaces", "media", "submap"]
+right = ["tray", "more", "keyboard", "network", "cpu", "memory", "gpu",
+         "battery", "brightness", "volume", "notifications", "clock", "power"]
+# Show the bottom task bar.
+tasks = true
+
+# Per-display overrides, by connector name (see `hyprctl monitors`).
+[outputs."HDMI-A-1"]
+workspaces = [4, 5, 6]      # show these workspaces on this display
+right = ["clock"]           # replaces bar.right here
+tasks = false               # no task bar on this display
+# disabled = true           # no bars on this display at all
+
+# `time` crate format descriptions.
+[clock]
+date = "[year]/[month]/[day]"
+time = "[hour]:[minute]:[second]"
+
+# Polling intervals in seconds. Volume and workspaces are event-driven.
+[intervals]
+status = 1
+network = 1
+gpu = 2
+notifications = 2
+
+# Power menu commands, run with `sh -c`. An empty string hides an entry.
+# Log out uses Hyprland's exit dispatcher unless `logout` is set.
+[power]
+lock = "loginctl lock-session"
+suspend = "systemctl suspend"
+reboot = "systemctl reboot"
+poweroff = "systemctl poweroff"
+
+[keyboard]
+# Show the layout even when the keyboard has only one.
+always = false
+```
+
+Services for modules that no display uses are not started; for example,
+`nvidia-smi` is never run unless some layout includes `gpu`.
+
+## Home Manager
+
+The flake provides a Home Manager module that installs the bar, generates its
+theme and config into the Nix store, and runs it as a systemd user service:
+
+```nix
+{
+  inputs.epic-bar-rs.url = "github:DMGDy/epic-bar-rs";
+  # ...
+  home-manager.users.me = {
+    imports = [ inputs.epic-bar-rs.homeManagerModules.default ];
+    programs.epic-bar = {
+      enable = true;
+      theme = "autumn-dark";          # or a path to your own CSS file
+      extraCss = ''
+        .status-cpu .status-icon { color: #e0675a; }
+      '';
+      settings = {
+        workspaces = 10;
+        outputs."HDMI-A-1".workspaces = [ 4 5 6 ];
+      };
+    };
+  };
+}
+```
+
+The service starts with `wayland.systemd.target` (`graphical-session.target`
+by default), restarts on failure, and restarts when the theme or settings
+change. It passes the generated files through `EPIC_BAR_THEME` and
+`EPIC_BAR_CONFIG`, so nothing is written to `~/.config/epic-bar-rs`. It needs
+`WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` in the systemd user
+environment, which Home Manager's Hyprland module exports by default. Set
+`programs.epic-bar.systemd.enable = false` to start the bar some other way.
+
+Starting the bar while it is already running does nothing; the running instance
+keeps its bars.
 
 ## Themes
 
@@ -195,15 +328,20 @@ I would like to look at.
 * [X] Window-attention highlighting
 * [X] Window and last-seen workspace previews
 * [X] Runtime CSS themes
-* [ ] Wi-Fi signal strength
-* [ ] PipeWire volume/mute controls
-* [ ] Proper multi-monitor placement and output-hotplug handling
+* [X] Wi-Fi signal strength
+* [X] PipeWire volume/mute controls
+* [X] Proper multi-monitor placement and output-hotplug handling
+* [X] System tray, notifications, power menu, keyboard layout and submap
+* [X] GPU usage and temperatures, backlight brightness
+* [X] Config file and Home Manager module
 * [ ] Continue improving error handling
 
 ## Known Issues
 
-* Only one pair of bars is created, rather than one per display.
-* Turning a display off and on can require restarting the bar.
+* Tray items are given (0, 0) as click coordinates, since Wayland clients
+  cannot know their global position; items that place their own popup there
+  open it at the top-left corner.
+* The volume module controls the default output (sink) only.
 * Preview support depends on Hyprland's capture protocols and permissions.
   An inactive workspace without a cached image has no workspace preview yet.
 * App-icon matching depends on desktop files and the icon theme; unmatched
