@@ -394,3 +394,121 @@ cpu-load-label {
 active-window-box:hover {
     box-shadow: none;
 }
+
+/* Tray, volume, GPU, brightness, notifications, keyboard, submap and power. */
+.status-gpu .status-icon,
+.gpu-history {
+    color: #34d399;
+}
+
+.status-volume .status-icon {
+    color: #818cf8;
+}
+
+.status-volume.muted .status-icon,
+.status-volume.muted label,
+.status-notifications.paused .status-icon {
+    color: @autumn_secondary;
+}
+
+.status-brightness .status-icon {
+    color: #facc15;
+}
+
+.status-notifications .status-icon {
+    color: #38bdf8;
+}
+
+.status-keyboard .status-icon {
+    color: #94a3b8;
+}
+
+keyboard-label {
+    font-size: 16px;
+    color: @autumn_secondary;
+}
+
+.notifications-button,
+.keyboard-button {
+    padding: 2px 6px;
+}
+
+.power-button {
+    padding: 5px 10px;
+}
+
+.power-button image {
+    color: @autumn_accent;
+}
+
+submap-label.submap {
+    margin: 8px 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: @autumn_selection;
+    color: @autumn_accent;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+tray {
+    padding: 0 2px;
+}
+
+tray button.tray-item {
+    min-width: 0;
+    min-height: 0;
+    padding: 4px 6px;
+}
+
+tray button.tray-item image {
+    color: @autumn_foreground;
+}
+
+.bar-popover .audio-output.selected,
+.bar-popover .audio-output.selected label {
+    background-color: @autumn_selection;
+    color: @autumn_accent;
+}
+
+.bar-popover .power-action.confirm,
+.bar-popover .power-action.confirm label,
+.bar-popover .power-action.confirm image {
+    background-color: @autumn_critical_background;
+    color: @autumn_accent;
+}
+
+.bar-popover scale trough {
+    background-color: @autumn_border;
+}
+
+.bar-popover scale highlight {
+    background-color: @autumn_accent;
+}
+
+.bar-popover scale slider {
+    background-color: @autumn_background;
+    border: 1px solid @autumn_accent;
+}
+
+popover.tray-menu contents {
+    padding: 6px;
+}
+
+popover.tray-menu modelbutton {
+    padding: 4px 10px;
+    border-radius: 6px;
+    color: @autumn_foreground;
+}
+
+popover.tray-menu modelbutton:hover {
+    background-color: @autumn_surface;
+}
+
+popover.tray-menu modelbutton:disabled label {
+    color: @autumn_secondary;
+}
+
+popover.tray-menu separator {
+    background-color: @autumn_border;
+}
