@@ -1,0 +1,396 @@
+@import url("windows-11-light.css");
+
+/* Autumn Dark: dark counterpart of Autumn Light, matching the Kitty override. */
+@define-color autumn_background #1d1411;
+@define-color autumn_foreground #ecdcd2;
+@define-color autumn_secondary #b89a8c;
+@define-color autumn_accent #e0675a;
+@define-color autumn_selection #5a3426;
+@define-color autumn_surface #2a1d18;
+@define-color autumn_border #4a3128;
+@define-color autumn_warning #e0a458;
+@define-color autumn_warning_background #3d2a14;
+@define-color autumn_critical_background #4a1f19;
+
+window, top-bar, bottom-bar, viewport {
+    background-color: @autumn_background;
+}
+
+button, label, box {
+    color: @autumn_foreground;
+}
+
+tooltip.background {
+    background-color: @autumn_background;
+    background-image: none;
+    color: @autumn_foreground;
+    border: 1px solid @autumn_border;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+tooltip label {
+    color: @autumn_foreground;
+    font-size: 16px;
+}
+
+top-bar, bottom-bar {
+    padding: 0 8px;
+}
+
+top-bar {
+    padding-left: 0;
+    border-bottom: 1px solid @autumn_border;
+}
+
+bottom-bar {
+    border-top: 1px solid @autumn_border;
+}
+
+top-bar main-box {
+    min-height: 47px;
+}
+
+bottom-bar main-box {
+    min-height: 37px;
+}
+
+.bar-button {
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 5px 10px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 4px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    font-size: 16px;
+    transition: background-color 100ms ease;
+}
+
+.bar-button:hover {
+    background-color: @autumn_surface;
+    color: @autumn_foreground;
+}
+
+.bar-button:checked {
+    background-color: @autumn_surface;
+    color: @autumn_accent;
+}
+
+.bar-button:focus-visible {
+    outline: 1px solid @autumn_accent;
+    outline-offset: -2px;
+}
+
+.occupied, .occupied label, window-box, window-box window-label, window-box-empty {
+    color: @autumn_secondary;
+}
+
+.occupied:hover label, window-box:hover window-label {
+    color: @autumn_foreground;
+}
+
+.bar-button.active, .bar-button.empty-active, active-window-box.bar-button {
+    background-color: @autumn_selection;
+    border-bottom-color: @autumn_accent;
+    box-shadow: none;
+    font-weight: 500;
+}
+
+.active label, window-box.active window-label, .empty-active label, active-window-box window-label {
+    color: @autumn_accent;
+    font-weight: 500;
+}
+
+.bar-button.active:hover, .bar-button.empty-active:hover, active-window-box.bar-button:hover {
+    background-color: @autumn_selection;
+    box-shadow: none;
+}
+
+.animated-workspaces .bar-button.active,
+.animated-workspaces .bar-button.empty-active {
+    background-color: transparent;
+    border-bottom-color: transparent;
+}
+
+.numeric, window-label, net-label, bottom-bar label, .bar-button label {
+    font-size: 16px;
+}
+
+.workspace-button {
+    min-width: 47px;
+    min-height: 45px;
+    padding: 0;
+    border-radius: 0;
+}
+
+.numeric {
+    padding: 0;
+    margin: 0;
+}
+
+date-label {
+    color: @autumn_foreground;
+    font-weight: 500;
+}
+
+date-container.bar-button {
+    padding: 2px 6px;
+}
+
+.status-group {
+    padding: 3px;
+    border-radius: 4px;
+}
+
+.status-group, .status-group * {
+    color: @autumn_secondary;
+}
+
+.status-group.warning {
+    background-color: @autumn_warning_background;
+}
+
+.status-group.warning * {
+    color: @autumn_warning;
+}
+
+.status-group.critical {
+    background-color: @autumn_critical_background;
+}
+
+.status-group.critical * {
+    color: @autumn_accent;
+}
+
+/* Colorful status icons, independent of the surrounding text palette. */
+.status-cpu .status-icon {
+    color: #60a5fa;
+}
+
+.status-memory .status-icon {
+    color: #c084fc;
+}
+
+.status-network .status-icon {
+    color: #22d3ee;
+}
+
+.status-network.wireless .status-icon {
+    color: #4ade80;
+}
+
+.status-network.offline .status-icon,
+.status-network.pending .status-icon {
+    color: #94a3b8;
+}
+
+.status-battery .status-icon {
+    color: #4ade80;
+}
+
+.status-battery.charging .status-icon {
+    color: #2dd4bf;
+}
+
+date-container .status-icon {
+    color: #f472b6;
+}
+
+status-reveal-button image {
+    color: #fb923c;
+}
+
+.status-group.warning .status-icon {
+    color: #fbbf24;
+}
+
+.status-group.critical .status-icon {
+    color: #f87171;
+}
+
+icon-image {
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
+}
+
+tag-label {
+    padding: 0 4px;
+    font-size: 16px;
+    color: @autumn_secondary;
+}
+
+workspace-window-box-active {
+    background-color: transparent;
+}
+
+tag-label:not(.first-group) {
+    box-shadow: inset 1px 0 0 @autumn_border;
+}
+
+.status-popup,
+.status-popup > button {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+}
+
+date-container.status-popup {
+    padding: 2px 6px;
+    border-bottom: 2px solid transparent;
+}
+
+.status-popup.popup-open,
+.status-popup:hover {
+    background-color: @autumn_surface;
+}
+
+.bar-popover contents {
+    background-color: @autumn_background;
+    color: @autumn_foreground;
+    border: 1px solid @autumn_border;
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
+}
+
+.bar-popover arrow {
+    background-color: @autumn_background;
+    border-color: @autumn_border;
+}
+
+.bar-popover label,
+.bar-popover calendar {
+    color: @autumn_foreground;
+    font-size: 16px;
+}
+
+.bar-popover .popup-secondary {
+    color: @autumn_secondary;
+    font-size: 13px;
+}
+
+.bar-popover .popup-heading {
+    color: @autumn_accent;
+    font-weight: 600;
+}
+
+.hover-preview .preview-image {
+    background-color: @autumn_surface;
+    border: 1px solid @autumn_border;
+    border-radius: 6px;
+}
+
+.bar-popover button {
+    padding: 5px 8px;
+    border-radius: 6px;
+}
+
+.bar-popover button:hover {
+    background-color: @autumn_surface;
+}
+
+.bar-popover calendar label:selected {
+    color: @autumn_accent;
+    background-color: @autumn_selection;
+}
+
+.cpu-history {
+    color: #60a5fa;
+}
+
+.memory-history {
+    color: #c084fc;
+}
+
+.media-widget {
+    padding: 0 4px;
+}
+
+.media-control {
+    padding: 4px 5px;
+}
+
+.media-control image {
+    color: #f472b6;
+}
+
+.media-title {
+    font-size: 16px;
+    color: @autumn_secondary;
+    padding-left: 4px;
+}
+
+.media-widget.warning .media-title {
+    color: @autumn_warning;
+}
+
+@keyframes attention-pulse {
+    0% { background-color: #5c3d12; }
+    50% { background-color: #7a5218; }
+    100% { background-color: #5c3d12; }
+}
+
+.urgent {
+    animation: attention-pulse 600ms ease-in-out 2;
+}
+
+.bar-button.urgent,
+.bar-button.urgent:hover,
+.animated-workspaces .workspace-button.urgent,
+tag-label.urgent {
+    background-color: #5c3d12;
+    box-shadow: inset 0 0 0 2px #f59e0b;
+}
+
+.bar-button.urgent label,
+.bar-button.urgent window-label,
+tag-label.urgent {
+    color: #f0bb70;
+}
+
+.bar-button.active.urgent,
+.animated-workspaces .workspace-button.active.urgent {
+    border-bottom-color: @autumn_accent;
+}
+
+.urgent.attention-static {
+    animation: none;
+    transition: none;
+}
+
+/* The Windows 11 base theme hardcodes dark-on-light colors for these
+   widgets; Autumn Light leaves them alone, so restate them for a dark bar. */
+button:hover,
+.occupied:hover,
+date-container:hover,
+window-box:hover {
+    background-color: @autumn_surface;
+}
+
+status-reveal-button,
+battery-icon,
+mem-icon,
+date-container {
+    color: @autumn_foreground;
+}
+
+battery-label,
+mem-label,
+cpu-label,
+cpu-load-label {
+    color: @autumn_secondary;
+}
+
+.active:hover,
+active-window-box:hover {
+    box-shadow: none;
+}
