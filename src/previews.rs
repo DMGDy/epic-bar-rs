@@ -13,7 +13,7 @@ use gtk::{
 
 use crate::{
     capture::{self, Job, Outcome, Signals, Target},
-    workspaces::{WindowPreview, Workspaces, WORKSPACE_COUNT},
+    workspaces::{workspace_count, WindowPreview, Workspaces},
 };
 
 const WINDOW_INTERVAL: Duration = Duration::from_secs(1);
@@ -162,11 +162,11 @@ impl Previews {
             }
             self.0
                 .pending_workspace
-                .set(active.filter(|tag| (1..=WORKSPACE_COUNT).contains(tag)));
+                .set(active.filter(|tag| (1..=workspace_count()).contains(tag)));
             self.0.last_priority.set(None);
         }
         let mut info = BTreeMap::new();
-        for tag in 1..=WORKSPACE_COUNT {
+        for tag in 1..=workspace_count() {
             let detail = workspaces
                 .get(&tag)
                 .map(|workspace| workspace.tooltip())

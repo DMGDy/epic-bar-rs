@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use gtk::{gio, glib, prelude::*, Box, Button, Label, Orientation};
 
@@ -209,6 +213,7 @@ pub struct Media {
     connection: Rc<RefCell<Option<gio::DBusConnection>>>,
     refresh: async_channel::Sender<()>,
     events: async_channel::Receiver<()>,
+    stopped: Rc<Cell<bool>>,
 }
 
 impl Media {
@@ -252,6 +257,7 @@ impl Media {
             connection: Rc::new(RefCell::new(None)),
             refresh,
             events,
+            stopped: Rc::new(Cell::new(false)),
         };
         for (button, method) in [
             (&media.previous, "Previous"),
@@ -338,10 +344,17 @@ impl Media {
         }
     }
 
+    /* End the monitor loop (and its D-Bus subscriptions) when the bar
+     * holding this widget is torn down. */
+    pub fn stop(&self) {
+        self.stopped.set(true);
+        let _ = self.refresh.try_send(());
+    }
+
     pub fn start(&self) {
         let media = self.clone();
         glib::spawn_future_local(async move {
-            loop {
+            while !media.stopped.get() {
                 let connection = match gio::bus_get_future(gio::BusType::Session).await {
                     Ok(connection) => connection,
                     Err(error) => {
@@ -359,7 +372,7 @@ impl Media {
                 });
                 let _ = media.refresh.try_send(());
                 while media.events.recv().await.is_ok() {
-                    if connection.is_closed() {
+                    if connection.is_closed() || media.stopped.get() {
                         break;
                     }
                     match scan(&connection).await {
@@ -381,6 +394,9 @@ impl Media {
                 drop(subscriptions);
                 connection.disconnect(closed);
                 *media.connection.borrow_mut() = None;
+                if media.stopped.get() {
+                    break;
+                }
                 media.error("Session bus disconnected; reconnecting");
                 glib::timeout_future_seconds(2).await;
             }

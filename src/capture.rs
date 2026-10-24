@@ -6,7 +6,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::workspaces::{self, HyprEvent, WindowPreview, WORKSPACE_COUNT};
+use crate::workspaces::{self, workspace_count, HyprEvent, WindowPreview};
 
 pub const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 const WIDTH: f64 = 640.0;
@@ -157,7 +157,7 @@ impl Monitor {
         }
         usize::try_from(self.active.id?)
             .ok()
-            .filter(|id| (1..=WORKSPACE_COUNT).contains(id))
+            .filter(|id| (1..=workspace_count()).contains(id))
     }
 }
 

@@ -14,35 +14,53 @@
 *   You should have received a copy of the GNU General Public License
 *   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-use std::{cell::Cell, fs, io, path::Path, rc::Rc, sync::mpsc, thread, time::Duration};
+use std::{cell::Cell, fs, io, path::Path, rc::Rc};
 
 use gtk::{
-    gdk::Display, gio, glib, glib::ControlFlow, pango, prelude::*, Align, Application,
-    ApplicationWindow, Box, Button, Image, Label, Orientation, StyleProvider, ToggleButton,
+    gdk::Display, gio, glib, pango, prelude::*, Align, Application, Box, Button, Image, Label,
+    Orientation, StyleProvider, ToggleButton,
 };
 
-use gtk4_layer_shell::{Edge, Layer, LayerShell};
-
+mod audio;
+mod bars;
+mod brightness;
 mod capture;
+mod config;
+mod gpu;
+mod hub;
 mod icons;
+mod keyboard;
 mod marquee;
 mod media;
 mod network;
+mod notifications;
 mod panels;
+mod power;
 mod previews;
 mod selection;
 mod status;
 mod tasks;
 mod theme;
+mod tray;
+mod util;
 mod workspaces;
 
-use crate::status::{Cpu, StatusLevel};
-use crate::workspaces::Workspaces;
+use crate::status::StatusLevel;
+use crate::workspaces::{View, Workspaces};
 
 const APP_ID: &str = "org.gtk_rs.epic_bar";
 type NetworkSnapshot = Result<Vec<network::Network>, String>;
-// This cannot keep going
+
 fn main() -> glib::ExitCode {
+    // Read the config before GTK so a bad file fails fast with a clear error.
+    let config = match config::load() {
+        Ok(config) => Rc::new(config),
+        Err(error) => {
+            eprintln!("epic-bar-rs: {error}");
+            return glib::ExitCode::FAILURE;
+        }
+    };
+    workspaces::set_workspace_count(config.workspaces);
     let app = Application::builder().application_id(APP_ID).build();
     let initialization_failed = Rc::new(Cell::new(false));
     let startup_failed = initialization_failed.clone();
@@ -55,13 +73,17 @@ fn main() -> glib::ExitCode {
         }
     });
     let activation_failed = initialization_failed.clone();
+    // Launching the bar again activates the running instance through D-Bus;
+    // only the first activation builds bars.
+    let built = Cell::new(false);
     app.connect_activate(move |app| {
-        if !activation_failed.get() {
-            if let Err(error) = build_ui(app) {
-                eprintln!("epic-bar-rs: cannot initialize bars: {error}");
-                activation_failed.set(true);
-                app.quit();
-            }
+        if activation_failed.get() || built.replace(true) {
+            return;
+        }
+        if let Err(error) = bars::Shell::start(app, config.clone()) {
+            eprintln!("epic-bar-rs: cannot initialize bars: {error}");
+            activation_failed.set(true);
+            app.quit();
         }
     });
     let result = app.run();
@@ -70,345 +92,6 @@ fn main() -> glib::ExitCode {
     } else {
         result
     }
-}
-
-fn build_ui(app: &Application) -> Result<(), String> {
-    let state = workspaces::get_workspaces()?;
-    let previews = previews::Previews::new(&state);
-    let (workspace_container, workspace_selection) = top_bar(app, &state, &previews);
-    let windows_container = bottom_bar(app, &state, &previews);
-    let (tx, rx) = async_channel::bounded::<workspaces::HyprEvent>(64);
-    let preview_signals = previews.signals();
-
-    thread::spawn(move || {
-        let mut last_error = None;
-        loop {
-            match workspaces::event_socket() {
-                Ok(mut reader) => {
-                    last_error = None;
-                    preview_signals.invalidate();
-                    preview_signals
-                        .connected
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    // Catch changes missed before connecting or while disconnected.
-                    if tx.send_blocking(workspaces::HyprEvent::Workspace).is_err() {
-                        return;
-                    }
-                    while let Some(event) = workspaces::next_event(&mut reader) {
-                        preview_signals.observe(&event);
-                        if tx.send_blocking(event).is_err() {
-                            return;
-                        }
-                    }
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    if last_error.as_ref() != Some(&message) {
-                        eprintln!("epic-bar-rs: cannot watch Hyprland events: {message}; retrying");
-                        last_error = Some(message);
-                    }
-                }
-            }
-            preview_signals
-                .connected
-                .store(false, std::sync::atomic::Ordering::Release);
-            preview_signals.invalidate();
-            thread::sleep(Duration::from_millis(500));
-        }
-    });
-
-    // Both bars use the same snapshot; coalesce event bursts into one refresh.
-    glib::spawn_future_local(async move {
-        let mut attention = workspaces::Attention::default();
-        while let Ok(event) = rx.recv().await {
-            attention.observe(&event);
-            for _ in 0..64 {
-                match rx.try_recv() {
-                    Ok(event) => attention.observe(&event),
-                    Err(_) => break,
-                }
-            }
-            let mut state = match workspaces::get_workspaces() {
-                Ok(state) => state,
-                Err(error) => {
-                    eprintln!("epic-bar-rs: cannot refresh bars: {error}");
-                    workspace_container.set_tooltip_text(Some(&error));
-                    windows_container.widget().set_tooltip_text(Some(&error));
-                    continue;
-                }
-            };
-            attention.apply(&mut state);
-            previews.update(&state);
-            workspace_container.set_tooltip_text(None);
-            windows_container.widget().set_tooltip_text(None);
-            populate_workspace_box(&workspace_container, &state);
-            workspace_selection.refresh();
-            windows_container.update(&state);
-        }
-    });
-    Ok(())
-}
-
-fn top_bar(
-    app: &Application,
-    ws: &Workspaces,
-    previews: &previews::Previews,
-) -> (Box, selection::Selection) {
-    let main_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .halign(Align::BaselineFill)
-        .hexpand(true)
-        .hexpand_set(true)
-        .homogeneous(false)
-        .spacing(4)
-        .css_name("main-box")
-        .build();
-
-    let workspace_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(4)
-        .css_name("workspaces-container")
-        .build();
-
-    let spacer = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .hexpand(true)
-        .build();
-
-    let status_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .hexpand(false)
-        .spacing(4)
-        .build();
-
-    let status_reveal_button = ToggleButton::builder()
-        .css_name("status-reveal-button")
-        .css_classes(["bar-button"])
-        .icon_name("view-more-symbolic")
-        .tooltip_text("Show CPU frequency and memory capacity")
-        .build();
-    let has = has_battery().unwrap_or_else(|error| {
-        eprintln!("epic-bar-rs: cannot detect battery: {error}");
-        false
-    });
-
-    let battery_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .css_classes(["status-group", "status-battery"])
-        .hexpand(false)
-        .valign(Align::Center)
-        .spacing(4)
-        .build();
-
-    let battery_image = status_icon("battery-missing-symbolic");
-    let battery_label = metric_label("battery-label");
-
-    let mem_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .css_classes(["status-group", "status-memory"])
-        .hexpand(false)
-        .valign(Align::Center)
-        .spacing(4)
-        .build();
-
-    let mem_icon = status_icon("drive-harddisk-symbolic");
-    let mem_label = metric_label("mem-label");
-    let mem_detail_label = metric_label("mem-label");
-    mem_detail_label.set_visible(false);
-
-    let cpu_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .css_classes(["status-group", "status-cpu"])
-        .hexpand(false)
-        .valign(Align::Center)
-        .spacing(4)
-        .build();
-
-    let cpu_image = status_icon("utilities-system-monitor-symbolic");
-    let cpu_label = metric_label("cpu-label");
-    cpu_label.set_visible(false);
-    let cpu_load_label = metric_label("cpu-load-label");
-
-    let net_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(4)
-        .build();
-    let pending_network = network_entry(
-        "Network...",
-        "network-wired-symbolic",
-        "Checking online network interfaces",
-    );
-    pending_network.add_css_class("pending");
-    net_container.append(&pending_network);
-
-    let date_label = metric_label("date-label");
-    let time_label = metric_label("date-label");
-    let dt = status::get_datetime();
-    date_label.set_text(&dt.date);
-    time_label.set_text(&dt.time);
-    let date_container = clock_button(&date_label, &time_label);
-
-    cpu_container.append(&cpu_image);
-    cpu_container.append(&cpu_load_label);
-    cpu_container.append(&cpu_label);
-
-    mem_container.append(&mem_icon);
-    mem_container.append(&mem_label);
-    mem_container.append(&mem_detail_label);
-    let memory_popup = panels::Usage::new(&mem_container, "Memory usage", "memory-history");
-    let cpu_popup = panels::Usage::new(&cpu_container, "CPU usage", "cpu-history");
-
-    if has {
-        battery_container.append(&battery_image);
-        battery_container.append(&battery_label);
-    }
-
-    status_container.append(&status_reveal_button);
-    status_container.append(&net_container);
-    status_container.append(&cpu_popup.button);
-    status_container.append(&memory_popup.button);
-    if has {
-        status_container.append(&battery_container);
-    }
-
-    connect_status_toggle(
-        &status_reveal_button,
-        &cpu_label,
-        &mem_label,
-        &mem_detail_label,
-    );
-
-    // init the container
-    let mut workspace_previews = Vec::new();
-    for n in 1..workspaces::WORKSPACE_COUNT + 1 {
-        let button = workspace_button(n);
-        workspace_previews.push(previews.attach(&button, previews::Anchor::Workspace(n)));
-        workspace_container.append(&button);
-    }
-    workspace_container.connect_unmap(move |_| {
-        for preview in &workspace_previews {
-            preview.hide();
-        }
-    });
-
-    populate_workspace_box(&workspace_container, ws);
-
-    let workspace_selection = selection::Selection::new(&workspace_container);
-    let media = media::Media::new();
-    media.start();
-    main_container.append(workspace_selection.widget());
-    main_container.append(&media.widget);
-    main_container.append(&spacer);
-    main_container.append(&status_container);
-    main_container.append(&date_container);
-
-    // create window and set title
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .css_name("top-bar")
-        .child(&main_container)
-        .build();
-
-    LayerShell::init_layer_shell(&window);
-    LayerShell::set_layer(&window, Layer::Top);
-
-    LayerShell::auto_exclusive_zone_enable(&window);
-
-    LayerShell::set_anchor(&window, Edge::Top, true);
-    LayerShell::set_anchor(&window, Edge::Left, true);
-    LayerShell::set_anchor(&window, Edge::Right, true);
-
-    window.set_decorated(true);
-    window.present();
-
-    // persisting data to track cpu load over time
-    let cpu = status::Cpu::new();
-    let mut cpu = cpu.clone();
-
-    let (net_tx, net_rx) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let mut reader = network::Reader::default();
-        loop {
-            let snapshot = reader.read().map_err(|error| error.to_string());
-            if net_tx.send(snapshot).is_err() {
-                break;
-            }
-            thread::sleep(Duration::from_secs(1));
-        }
-    });
-    let mut previous_networks = None;
-
-    // update other stuff less frequently
-    glib::source::timeout_add_seconds_local(1, move || {
-        if has {
-            let battery = status::get_battery_info();
-            battery_label.set_text(&format!("{}%", battery.capacity));
-            update_status(
-                &battery_container,
-                &battery_image,
-                battery.level(),
-                &battery.icon,
-            );
-            if battery.is_charging() {
-                battery_container.add_css_class("charging");
-            } else {
-                battery_container.remove_css_class("charging");
-            }
-            battery_container.set_tooltip_text(Some(&battery.tooltip_text));
-        }
-
-        let dt = status::get_datetime();
-        date_label.set_text(&dt.date);
-        time_label.set_text(&dt.time);
-
-        match net_rx.try_recv() {
-            Ok(networks) => update_networks(&net_container, &mut previous_networks, networks),
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => update_networks(
-                &net_container,
-                &mut previous_networks,
-                Err("Network monitor stopped".to_string()),
-            ),
-        }
-
-        let memory = status::get_mem_info();
-        mem_label.set_text(
-            &memory
-                .used_percent
-                .map_or_else(|| "N/A".to_string(), |used| format!("{used:.0}%")),
-        );
-        mem_detail_label.set_text(&memory.string);
-        mem_container.set_tooltip_text(Some(&format!("Memory: {}", memory.string)));
-        update_status(
-            &mem_container,
-            &mem_icon,
-            memory
-                .used_percent
-                .map_or(StatusLevel::Warning, StatusLevel::memory),
-            "drive-harddisk-symbolic",
-        );
-        memory_popup.update(memory.used_percent, &format!("Memory: {}", memory.string));
-
-        if cpu_label.is_visible() {
-            cpu_label.set_text(&Cpu::get_avg_freq());
-        }
-        let cpu_load = cpu.get_cpu_load();
-        cpu_load_label.set_text(&format!("{:.0}%", cpu_load));
-        cpu_container.set_tooltip_text(Some(&format!("CPU usage: {cpu_load:.1}%")));
-        cpu_popup.update(
-            Some(f64::from(cpu_load)),
-            &format!("CPU usage: {cpu_load:.1}%"),
-        );
-        update_status(
-            &cpu_container,
-            &cpu_image,
-            StatusLevel::cpu(cpu_load),
-            "utilities-system-monitor-symbolic",
-        );
-
-        ControlFlow::Continue
-    });
-    (workspace_container, workspace_selection)
 }
 
 fn network_entry(text: &str, icon: &str, tooltip: &str) -> Box {
@@ -560,33 +243,41 @@ fn connect_status_toggle(toggle: &ToggleButton, cpu: &Label, memory: &Label, det
 }
 
 fn init_style(provider: &impl IsA<StyleProvider>) {
-    let display = Display::default();
-    gtk::style_context_add_provider_for_display(
-        &display.unwrap(),
-        provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    match Display::default() {
+        Some(display) => gtk::style_context_add_provider_for_display(
+            &display,
+            provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        ),
+        None => eprintln!("epic-bar-rs: no display to apply the theme to"),
+    }
 }
 
-fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
+/* Show the buttons for existing workspaces in `view`, marking the one the
+ * view's output currently shows (or the focused one without an output). */
+fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces, view: &View) {
     let mut ws_opt = workspace_container.first_child();
 
     while let Some(ref workspace) = ws_opt {
-        let tag: usize = workspace.widget_name().as_str().parse().unwrap();
-        let workspace_info_opt = workspaces.get(&tag);
+        let Ok(tag) = workspace.widget_name().as_str().parse::<usize>() else {
+            ws_opt = workspace.next_sibling();
+            continue;
+        };
+        let workspace_info_opt = workspaces.get(&tag).filter(|_| view.shows(tag));
         // make sure each workspace button has only one active class at a time
         if let Some(workspace_info) = workspace_info_opt {
+            let active = view.is_active(workspace_info);
             workspace.set_visible(true);
             workspace.set_tooltip_text(Some(&workspace_info.tooltip()));
             if workspace.has_css_class("preview-anchor") {
                 workspace.set_has_tooltip(false);
             }
             theme::set_urgent(workspace, workspace_info.urgent());
-            if workspace_info.active && workspace_info.windows.is_empty() {
+            if active && workspace_info.windows.is_empty() {
                 workspace.remove_css_class("occupied");
                 workspace.remove_css_class("active");
                 workspace.add_css_class("empty-active");
-            } else if workspace_info.active && !workspace_info.windows.is_empty() {
+            } else if active && !workspace_info.windows.is_empty() {
                 workspace.remove_css_class("occupied");
                 workspace.remove_css_class("empty-active");
                 workspace.add_css_class("active");
@@ -602,39 +293,6 @@ fn populate_workspace_box(workspace_container: &Box, workspaces: &Workspaces) {
         }
         ws_opt = workspace.next_sibling();
     }
-}
-
-fn bottom_bar(app: &Application, ws: &Workspaces, previews: &previews::Previews) -> tasks::Tasks {
-    let main_container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .halign(Align::BaselineFill)
-        .hexpand(true)
-        .hexpand_set(true)
-        .homogeneous(false)
-        .css_name("main-box")
-        .build();
-
-    let workspace_windows_container = tasks::Tasks::new(ws, Some(previews.clone()));
-    let tasks = task_scroller(workspace_windows_container.widget());
-    main_container.append(&tasks);
-    let window = ApplicationWindow::builder()
-        .css_name("bottom-bar")
-        .resizable(true)
-        .application(app)
-        .child(&main_container)
-        .build();
-    LayerShell::init_layer_shell(&window);
-    LayerShell::set_layer(&window, Layer::Top);
-
-    LayerShell::auto_exclusive_zone_enable(&window);
-
-    LayerShell::set_anchor(&window, Edge::Bottom, true);
-    LayerShell::set_anchor(&window, Edge::Right, true);
-    LayerShell::set_anchor(&window, Edge::Left, true);
-
-    window.set_decorated(true);
-    window.present();
-    workspace_windows_container
 }
 
 fn task_label(title: &str) -> Label {
@@ -673,10 +331,9 @@ fn has_battery() -> io::Result<bool> {
     let power_supply = Path::new("/sys/class/power_supply");
     if power_supply.is_dir() {
         for entry in fs::read_dir(power_supply)? {
-            let entry = entry?;
-            let path = entry.path();
-            let path_name = path.to_str().to_owned().unwrap();
-            return Ok(path_name.contains("BAT"));
+            if entry?.file_name().to_string_lossy().contains("BAT") {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -845,11 +502,13 @@ mod tests {
                 iface: "eth0".into(),
                 kind: network::Kind::Wired,
                 ssid: None,
+                signal: None,
             },
             network::Network {
                 iface: "wlan0".into(),
                 kind: network::Kind::Wireless,
                 ssid: Some("Work WiFi".into()),
+                signal: None,
             },
         ];
         let area = Box::new(Orientation::Horizontal, 6);
@@ -939,7 +598,7 @@ mod tests {
             },
         )]);
         let windows = tasks::Tasks::new(&state, None);
-        populate_workspace_box(&workspaces, &state);
+        populate_workspace_box(&workspaces, &state, &View::all());
         let first_workspace = workspaces.first_child().unwrap();
         assert_eq!(
             first_workspace.tooltip_text().as_deref(),
@@ -997,7 +656,7 @@ mod tests {
             urgent: false,
             preview: None,
         });
-        populate_workspace_box(&workspaces, &state);
+        populate_workspace_box(&workspaces, &state, &View::all());
         windows.update(&state);
         assert_eq!(
             first_workspace.tooltip_text().as_deref(),
@@ -1025,7 +684,7 @@ mod tests {
                 active: false,
             },
         );
-        populate_workspace_box(&workspaces, &state);
+        populate_workspace_box(&workspaces, &state, &View::all());
         assert_eq!(
             first_workspace.tooltip_text().as_deref(),
             Some("Workspace 1\n- Second window")
@@ -1040,7 +699,7 @@ mod tests {
         let mut attention = workspaces::Attention::default();
         attention.observe(&workspaces::HyprEvent::Urgent("def".into()));
         attention.apply(&mut state);
-        populate_workspace_box(&workspaces, &state);
+        populate_workspace_box(&workspaces, &state, &View::all());
         assert!(
             first_workspace.has_css_class("active"),
             "attention changed the active workspace"
@@ -1056,13 +715,13 @@ mod tests {
         );
         attention.observe(&workspaces::HyprEvent::ActiveWindow(Some("def".into())));
         attention.apply(&mut state);
-        populate_workspace_box(&workspaces, &state);
+        populate_workspace_box(&workspaces, &state, &View::all());
         assert!(!first_workspace.has_css_class("urgent"));
         assert!(!first_workspace.has_css_class("attention-static"));
         assert_color(&top_label, "#8c1612");
         settings.set_property("gtk-enable-animations", animations);
         state.get_mut(&1).unwrap().windows[0].urgent = true;
-        populate_workspace_box(&workspaces, &state);
+        populate_workspace_box(&workspaces, &state, &View::all());
         assert!(first_workspace.has_css_class("urgent"));
         let empty = Workspaces::from([(
             2,
@@ -1073,7 +732,7 @@ mod tests {
                 active: true,
             },
         )]);
-        populate_workspace_box(&workspaces, &empty);
+        populate_workspace_box(&workspaces, &empty, &View::all());
         windows.update(&empty);
         assert!(!workspaces.first_child().unwrap().is_visible());
         assert_eq!(first_workspace.tooltip_text(), None);

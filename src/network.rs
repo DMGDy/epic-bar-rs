@@ -21,6 +21,40 @@ pub struct Network {
     pub iface: String,
     pub kind: Kind,
     pub ssid: Option<String>,
+    /* Wi-Fi signal in dBm, from `iw dev <iface> link`. */
+    pub signal: Option<i32>,
+}
+
+/* Signal quality buckets, matching the symbolic icon names. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Strength {
+    Excellent,
+    Good,
+    Ok,
+    Weak,
+    None,
+}
+
+impl Strength {
+    pub fn from_dbm(dbm: i32) -> Self {
+        match dbm {
+            -55.. => Self::Excellent,
+            -67..=-56 => Self::Good,
+            -75..=-68 => Self::Ok,
+            -85..=-76 => Self::Weak,
+            _ => Self::None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Excellent => "excellent",
+            Self::Good => "good",
+            Self::Ok => "ok",
+            Self::Weak => "weak",
+            Self::None => "none",
+        }
+    }
 }
 
 impl Network {
@@ -35,26 +69,52 @@ impl Network {
     pub fn icon_name(&self) -> &'static str {
         match self.kind {
             Kind::Wired => "network-wired-symbolic",
-            Kind::Wireless => "network-wireless-symbolic",
+            Kind::Wireless => match self.signal.map(Strength::from_dbm) {
+                Some(Strength::Excellent) => "network-wireless-signal-excellent-symbolic",
+                Some(Strength::Good) => "network-wireless-signal-good-symbolic",
+                Some(Strength::Ok) => "network-wireless-signal-ok-symbolic",
+                Some(Strength::Weak) => "network-wireless-signal-weak-symbolic",
+                Some(Strength::None) => "network-wireless-signal-none-symbolic",
+                None => "network-wireless-symbolic",
+            },
             Kind::Offline => "network-offline-symbolic",
         }
     }
 
     pub fn tooltip(&self) -> String {
         match self.kind {
-            Kind::Wireless => match &self.ssid {
-                Some(ssid) => format!("{} - Wi-Fi: {ssid}", self.iface),
-                None => format!("{} - Wi-Fi", self.iface),
-            },
+            Kind::Wireless => {
+                let mut text = match &self.ssid {
+                    Some(ssid) => format!("{} - Wi-Fi: {ssid}", self.iface),
+                    None => format!("{} - Wi-Fi", self.iface),
+                };
+                if let Some(dbm) = self.signal {
+                    text.push_str(&format!(
+                        "\nSignal: {dbm} dBm ({})",
+                        Strength::from_dbm(dbm).name()
+                    ));
+                }
+                text
+            }
             Kind::Wired => format!("{} - Wired", self.iface),
             Kind::Offline => "Disconnected".to_string(),
         }
     }
 }
 
+/* What `iw dev <iface> link` reports for a connected interface. */
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Link {
+    pub ssid: Option<String>,
+    pub signal: Option<i32>,
+}
+
+// Signal strength changes quickly; refresh it more often than the old SSID-only cache.
+const LINK_TTL: Duration = Duration::from_secs(4);
+
 #[derive(Default)]
 pub struct Reader {
-    ssids: HashMap<String, (Instant, Option<String>)>,
+    links: HashMap<String, (Instant, Link)>,
 }
 
 impl Reader {
@@ -66,41 +126,43 @@ impl Reader {
     fn read_interfaces(&mut self, root: &Path, routes: &str) -> io::Result<Vec<Network>> {
         let mut networks = online_interfaces(root)?;
         if networks.is_empty() {
-            self.ssids.clear();
+            self.links.clear();
             return Ok(vec![Network::default()]);
         }
         let primary = primary_iface(routes)?;
         networks.sort_by(|a, b| a.iface.cmp(&b.iface));
         networks.sort_by_key(|net| Some(net.iface.as_str()) != primary.as_deref());
-        self.ssids.retain(|iface, _| {
+        self.links.retain(|iface, _| {
             networks
                 .iter()
                 .any(|net| net.iface == *iface && net.kind == Kind::Wireless)
         });
         for network in &mut networks {
             if network.kind == Kind::Wireless {
-                network.ssid = self.cached_ssid(&network.iface);
+                let link = self.cached_link(&network.iface);
+                network.ssid = link.ssid;
+                network.signal = link.signal;
             }
         }
         Ok(networks)
     }
 
-    fn cached_ssid(&mut self, iface: &str) -> Option<String> {
-        if let Some((when, ssid)) = self.ssids.get(iface) {
-            if when.elapsed() < Duration::from_secs(10) {
-                return ssid.clone();
+    fn cached_link(&mut self, iface: &str) -> Link {
+        if let Some((when, link)) = self.links.get(iface) {
+            if when.elapsed() < LINK_TTL {
+                return link.clone();
             }
         }
-        let ssid = match fetch_ssid(iface) {
-            Ok(ssid) => ssid,
+        let link = match fetch_link(iface) {
+            Ok(link) => link,
             Err(error) => {
-                eprintln!("epic-bar-rs: cannot read Wi-Fi SSID for {iface}: {error}");
-                None
+                eprintln!("epic-bar-rs: cannot read Wi-Fi link for {iface}: {error}");
+                Link::default()
             }
         };
-        self.ssids
-            .insert(iface.to_string(), (Instant::now(), ssid.clone()));
-        ssid
+        self.links
+            .insert(iface.to_string(), (Instant::now(), link.clone()));
+        link
     }
 }
 
@@ -144,6 +206,7 @@ fn online_interfaces(root: &Path) -> io::Result<Vec<Network>> {
             iface,
             kind,
             ssid: None,
+            signal: None,
         });
     }
     Ok(networks)
@@ -194,7 +257,14 @@ fn parse_ssid(text: &str) -> Option<String> {
     })
 }
 
-fn fetch_ssid(iface: &str) -> io::Result<Option<String>> {
+fn parse_signal(text: &str) -> Option<i32> {
+    text.lines().find_map(|line| {
+        let value = line.trim().strip_prefix("signal:")?.trim();
+        value.split_whitespace().next()?.parse().ok()
+    })
+}
+
+fn fetch_link(iface: &str) -> io::Result<Link> {
     let output = Command::new("timeout")
         .args(["--kill-after=1s", "2s", "iw", "dev", iface, "link"])
         .output()?;
@@ -205,7 +275,11 @@ fn fetch_ssid(iface: &str) -> io::Result<Option<String>> {
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    Ok(parse_ssid(&String::from_utf8_lossy(&output.stdout)))
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(Link {
+        ssid: parse_ssid(&text),
+        signal: parse_signal(&text),
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -397,9 +471,16 @@ mod tests {
         assert!(online_interfaces(&interfaces.0.join("missing")).is_err());
 
         let mut reader = Reader::default();
-        reader
-            .ssids
-            .insert("wlan0".into(), (Instant::now(), Some("Work WiFi".into())));
+        reader.links.insert(
+            "wlan0".into(),
+            (
+                Instant::now(),
+                Link {
+                    ssid: Some("Work WiFi".into()),
+                    signal: Some(-60),
+                },
+            ),
+        );
         let networks = reader
             .read_interfaces(
                 &interfaces.0,
@@ -416,12 +497,16 @@ mod tests {
             ["eth1", "eth0", "wlan0"]
         );
         assert_eq!(networks[2].label(), "Work WiFi");
+        assert_eq!(
+            networks[2].icon_name(),
+            "network-wireless-signal-good-symbolic"
+        );
         let empty = Interfaces::new();
         assert_eq!(
             reader.read_interfaces(&empty.0, "Iface\n").unwrap(),
             [Network::default()]
         );
-        assert!(reader.ssids.is_empty());
+        assert!(reader.links.is_empty());
     }
 
     #[test]
@@ -431,22 +516,49 @@ mod tests {
             Some("Work WiFi".to_string())
         );
         assert_eq!(parse_ssid("Not connected.\n"), None);
+        assert_eq!(
+            parse_signal("Connected to 00:00:00:00:00:00\n\tsignal: -48 dBm\n"),
+            Some(-48)
+        );
+        assert_eq!(parse_signal("Not connected.\n"), None);
         let mut reader = Reader::default();
-        reader
-            .ssids
-            .insert("wlan0".into(), (Instant::now(), Some("First".into())));
-        reader
-            .ssids
-            .insert("wlan1".into(), (Instant::now(), Some("Second".into())));
-        assert_eq!(reader.cached_ssid("wlan0").as_deref(), Some("First"));
-        assert_eq!(reader.cached_ssid("wlan1").as_deref(), Some("Second"));
+        for (iface, ssid) in [("wlan0", "First"), ("wlan1", "Second")] {
+            reader.links.insert(
+                iface.into(),
+                (
+                    Instant::now(),
+                    Link {
+                        ssid: Some(ssid.into()),
+                        signal: None,
+                    },
+                ),
+            );
+        }
+        assert_eq!(reader.cached_link("wlan0").ssid.as_deref(), Some("First"));
+        assert_eq!(reader.cached_link("wlan1").ssid.as_deref(), Some("Second"));
         assert_eq!(Network::default().label(), "Offline");
         let wireless = Network {
             iface: "wlan0".into(),
             kind: Kind::Wireless,
             ssid: Some("Work WiFi".into()),
+            signal: Some(-80),
         };
         assert_eq!(wireless.label(), "Work WiFi");
         assert!(wireless.tooltip().contains("wlan0"));
+        assert!(wireless.tooltip().contains("-80 dBm (weak)"));
+        assert_eq!(
+            wireless.icon_name(),
+            "network-wireless-signal-weak-symbolic"
+        );
+        for (dbm, strength) in [
+            (-40, Strength::Excellent),
+            (-55, Strength::Excellent),
+            (-56, Strength::Good),
+            (-70, Strength::Ok),
+            (-85, Strength::Weak),
+            (-90, Strength::None),
+        ] {
+            assert_eq!(Strength::from_dbm(dbm), strength, "{dbm} dBm");
+        }
     }
 }

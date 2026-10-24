@@ -1,4 +1,8 @@
-use std::{fmt, path::Path, thread};
+use std::{
+    fmt, fs,
+    path::{Path, PathBuf},
+    thread,
+};
 
 use time::{format_description, OffsetDateTime};
 
@@ -15,6 +19,7 @@ const CPU_STAT: &str = "/proc/stat";
 const CPU_FREQ_PREF: &str = "/sys/devices/system/cpu/cpu"; //followed by cpu number
 const CPU_FREQ_POST: &str = "/cpufreq/scaling_cur_freq";
 
+#[derive(Clone)]
 pub struct DateTime {
     pub date: String,
     pub time: String,
@@ -47,7 +52,7 @@ impl StatusLevel {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum BatteryStatus {
     Discharging,
     Charging,
@@ -55,6 +60,7 @@ enum BatteryStatus {
     Error,
 }
 
+#[derive(Clone)]
 pub struct Battery {
     pub capacity: u32, //percentage left on battery
     pub icon: String,
@@ -91,6 +97,7 @@ impl Battery {
     }
 }
 
+#[derive(Clone)]
 pub struct Memory {
     pub string: String,
     pub used_percent: Option<f64>,
@@ -382,24 +389,110 @@ pub fn get_battery_info() -> Battery {
     battery
 }
 
-fn get_date(dt: &OffsetDateTime) -> String {
-    let date = dt.date();
-    let format = format_description::parse_borrowed::<1>("[year]/[month]/[day]").unwrap();
-    date.format(&format).unwrap()
+/* One status-timer tick, shared by every output's bar. */
+#[derive(Clone)]
+pub struct Sample {
+    pub battery: Option<Battery>,
+    pub datetime: DateTime,
+    pub memory: Memory,
+    pub cpu_load: f32,
+    /* Only sampled while some bar shows CPU details. */
+    pub cpu_freq: Option<String>,
+    pub cpu_temperature: Option<f64>,
 }
 
-fn get_time(dt: &OffsetDateTime) -> String {
-    let time = dt.time();
-    let format = format_description::parse_borrowed::<1>("[hour]:[minute]:[second]").unwrap();
-    time.format(&format).unwrap()
+/* The configured clock rows. Formats are validated when the config loads. */
+pub struct Clock {
+    date: format_description::OwnedFormatItem,
+    time: format_description::OwnedFormatItem,
 }
 
-pub fn get_datetime() -> DateTime {
-    // fall back to UTC if the local offset can't be determined
-    let dt = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
-    DateTime {
-        date: get_date(&dt),
-        time: get_time(&dt),
+impl Clock {
+    pub fn new(config: &crate::config::Clock) -> Result<Self, String> {
+        let parse = |format: &str| {
+            format_description::parse_owned::<2>(format)
+                .map_err(|error| format!("invalid clock format {format:?}: {error}"))
+        };
+        Ok(Self {
+            date: parse(&config.date)?,
+            time: parse(&config.time)?,
+        })
+    }
+
+    pub fn format(&self, dt: &OffsetDateTime) -> DateTime {
+        let format = |item| {
+            dt.format(item).unwrap_or_else(|error| {
+                eprintln!("epic-bar-rs: cannot format clock: {error}");
+                "--".into()
+            })
+        };
+        DateTime {
+            date: format(&self.date),
+            time: format(&self.time),
+        }
+    }
+
+    pub fn now(&self) -> DateTime {
+        // fall back to UTC if the local offset can't be determined
+        self.format(&OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc()))
+    }
+}
+
+/* CPU package temperature from hwmon: k10temp (AMD), coretemp (Intel),
+ * zenpower, or an ARM cpu_thermal zone. The sensor path is found once. */
+#[derive(Default)]
+pub struct Thermal {
+    path: Option<Option<PathBuf>>,
+}
+
+const CPU_SENSORS: [(&str, &[&str]); 4] = [
+    ("k10temp", &["Tctl", "Tdie"]),
+    ("zenpower", &["Tdie", "Tctl"]),
+    ("coretemp", &["Package id 0"]),
+    ("cpu_thermal", &[]),
+];
+
+fn find_cpu_sensor(root: &Path) -> Option<PathBuf> {
+    let mut devices: Vec<_> = fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    devices.sort();
+    for (driver, labels) in CPU_SENSORS {
+        for device in &devices {
+            let name = fs::read_to_string(device.join("name")).unwrap_or_default();
+            if name.trim() != driver {
+                continue;
+            }
+            for label in labels.iter() {
+                for index in 1..=16 {
+                    let path = device.join(format!("temp{index}_label"));
+                    if fs::read_to_string(&path).is_ok_and(|text| text.trim() == *label) {
+                        return Some(device.join(format!("temp{index}_input")));
+                    }
+                }
+            }
+            let input = device.join("temp1_input");
+            if input.exists() {
+                return Some(input);
+            }
+        }
+    }
+    None
+}
+
+pub fn read_millidegrees(path: &Path) -> Option<f64> {
+    let value = fs::read_to_string(path).ok()?.trim().parse::<f64>().ok()?;
+    Some(value / 1000.0).filter(|celsius| (-50.0..200.0).contains(celsius))
+}
+
+impl Thermal {
+    pub fn celsius(&mut self) -> Option<f64> {
+        let path = self
+            .path
+            .get_or_insert_with(|| find_cpu_sensor(Path::new("/sys/class/hwmon")));
+        read_millidegrees(path.as_deref()?)
     }
 }
 
@@ -464,14 +557,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn configured_clock_formats_both_rows_from_the_full_timestamp() {
+        let dt = time::Date::from_calendar_date(2026, time::Month::October, 2)
+            .unwrap()
+            .with_hms(17, 6, 9)
+            .unwrap()
+            .assume_utc();
+        let clock = Clock::new(&crate::config::Clock {
+            date: "[weekday repr:short] [day] [month repr:short]".into(),
+            time: "[hour repr:12]:[minute] [period]".into(),
+        })
+        .unwrap();
+        let formatted = clock.format(&dt);
+        assert_eq!(formatted.date, "Fri 02 Oct");
+        assert_eq!(formatted.time, "05:06 PM");
+        let default = Clock::new(&crate::config::Clock::default()).unwrap();
+        assert_eq!(default.format(&dt).to_string(), "2026/10/02\n17:06:09");
+    }
+
+    #[test]
+    fn cpu_sensor_prefers_labelled_package_temperature() {
+        let root = std::env::temp_dir().join(format!("epic-bar-hwmon-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (dir, name) in [("hwmon0", "nvme"), ("hwmon1", "k10temp")] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+            fs::write(root.join(dir).join("name"), format!("{name}\n")).unwrap();
+        }
+        fs::write(root.join("hwmon0/temp1_input"), "40000").unwrap();
+        fs::write(root.join("hwmon1/temp1_label"), "Tccd1").unwrap();
+        fs::write(root.join("hwmon1/temp1_input"), "61000").unwrap();
+        fs::write(root.join("hwmon1/temp3_label"), "Tctl\n").unwrap();
+        fs::write(root.join("hwmon1/temp3_input"), "52500\n").unwrap();
+        let sensor = find_cpu_sensor(&root).unwrap();
+        assert_eq!(sensor, root.join("hwmon1/temp3_input"));
+        assert_eq!(read_millidegrees(&sensor), Some(52.5));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn clock_format_keeps_zero_padded_date_and_time() {
         let dt = time::Date::from_calendar_date(2026, time::Month::October, 2)
             .unwrap()
             .with_hms(7, 6, 9)
             .unwrap()
             .assume_utc();
-        assert_eq!(get_date(&dt), "2026/10/02");
-        assert_eq!(get_time(&dt), "07:06:09");
+        let clock = Clock::new(&crate::config::Clock::default())
+            .unwrap()
+            .format(&dt);
+        assert_eq!(clock.date, "2026/10/02");
+        assert_eq!(clock.time, "07:06:09");
     }
 
     #[test]

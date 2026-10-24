@@ -120,6 +120,7 @@ mod tests {
             "theme.css",
             "themes/windows-11-light.css",
             "themes/autumn-light.css",
+            "themes/autumn-dark.css",
         ] {
             load_file(&root.join(theme)).unwrap();
         }
@@ -131,6 +132,22 @@ mod tests {
             &provider,
         );
         assert!(load_file(&root.join("themes/missing.css")).is_err());
+        // The Home Manager module imports bundled themes by absolute path.
+        let absolute = env::temp_dir().join(format!(
+            "epic-bar-absolute-theme-{}.css",
+            std::process::id()
+        ));
+        fs::write(
+            &absolute,
+            format!(
+                "@import url(\"{}\");\n.status-cpu .status-icon {{ color: #e0675a; }}\n",
+                root.join("themes/autumn-dark.css").display()
+            ),
+        )
+        .unwrap();
+        let loaded = load_file(&absolute);
+        fs::remove_file(&absolute).unwrap();
+        loaded.unwrap();
         let invalid =
             env::temp_dir().join(format!("epic-bar-invalid-theme-{}.css", std::process::id()));
         fs::write(

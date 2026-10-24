@@ -3,12 +3,22 @@ use std::{
     env,
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 
 use serde::{de::Error as _, Deserialize};
 
-pub const WORKSPACE_COUNT: usize = 9;
+static WORKSPACE_COUNT: AtomicUsize = AtomicUsize::new(9);
+
+/* Workspaces 1..=workspace_count() get buttons, previews and captures. */
+pub fn workspace_count() -> usize {
+    WORKSPACE_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn set_workspace_count(count: usize) {
+    WORKSPACE_COUNT.store(count, Ordering::Relaxed);
+}
 
 /* A bar-relevant Hyprland event read from socket2.
  * socket2 lines look like `EVENT>>data`; only events that require the bar
@@ -17,22 +27,35 @@ pub const WORKSPACE_COUNT: usize = 9;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HyprEvent {
     Workspace,
+    /* Hyprland reloaded its config, or the bar (re)connected: everything,
+     * including keyboard layouts, may have changed. */
+    ConfigReloaded,
     ActiveWindow(Option<String>),
     Urgent(String),
     WindowTitle,
     OpenWindow,
     CloseWindow(String),
     MoveWindow,
+    /* Keyboard layout changed: (keyboard, layout). */
+    Layout(String, String),
+    /* Entered a submap; empty when returning to the default bindings. */
+    Submap(String),
+}
+
+impl HyprEvent {
+    /* Events that change workspaces or windows and need a state refresh. */
+    pub fn refreshes_workspaces(&self) -> bool {
+        !matches!(self, Self::Layout(..) | Self::Submap(_))
+    }
 }
 
 impl HyprEvent {
     fn parse(name: &str, data: &str) -> Option<Self> {
         match name {
+            "configreloaded" => Some(Self::ConfigReloaded),
             "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" | "monitoradded"
-            | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2" | "configreloaded"
-            | "activespecial" | "activespecialv2" | "moveworkspace" | "moveworkspacev2" => {
-                Some(Self::Workspace)
-            }
+            | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2" | "activespecial"
+            | "activespecialv2" | "moveworkspace" | "moveworkspacev2" => Some(Self::Workspace),
             "activewindow" => Some(Self::ActiveWindow(None)),
             "activewindowv2" if data.is_empty() => Some(Self::ActiveWindow(None)),
             "activewindowv2" | "urgent" | "closewindow" => match parse_address(data) {
@@ -47,6 +70,11 @@ impl HyprEvent {
             "windowtitle" | "windowtitlev2" => Some(Self::WindowTitle),
             "openwindow" => Some(Self::OpenWindow),
             "movewindow" | "movewindowv2" => Some(Self::MoveWindow),
+            // Keyboard names cannot contain commas; layout names can.
+            "activelayout" => data
+                .split_once(',')
+                .map(|(keyboard, layout)| Self::Layout(keyboard.into(), layout.into())),
+            "submap" => Some(Self::Submap(data.into())),
             _ => None,
         }
     }
@@ -75,6 +103,7 @@ pub struct WindowPreview {
     pub monitor: i64,
 }
 
+#[derive(Clone)]
 pub struct Window {
     pub name: String,
     pub info: String,
@@ -144,6 +173,7 @@ pub type AllWindows = Vec<Window>;
 /* windows: vector of windows in order of activity
  * order: the order of this workspace in activity
  */
+#[derive(Clone)]
 pub struct Workspace {
     pub windows: Vec<Window>,
     pub tag: usize,
@@ -434,6 +464,172 @@ pub fn get_workspaces() -> Result<Workspaces, String> {
     Ok(workspaces)
 }
 
+/* Where workspaces live across outputs, from Hyprland's monitor, workspace
+ * and workspace-rule replies. Keys are output (connector) names.
+ */
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Outputs {
+    /* Output name -> the workspace it currently shows. */
+    pub active: BTreeMap<String, usize>,
+    /* Existing workspace -> the output it is on. */
+    pub placement: BTreeMap<usize, String>,
+    /* Workspace -> the output its rule binds it to. */
+    pub rules: BTreeMap<usize, String>,
+}
+
+#[derive(Deserialize)]
+struct JsonMonitor {
+    name: String,
+    #[serde(rename = "activeWorkspace")]
+    active_workspace: JsonWorkspaceRef,
+}
+
+#[derive(Deserialize)]
+struct JsonPlacedWorkspace {
+    id: i64,
+    monitor: String,
+}
+
+#[derive(Deserialize)]
+struct JsonWorkspaceRule {
+    #[serde(rename = "workspaceString")]
+    workspace: String,
+    #[serde(default)]
+    monitor: Option<String>,
+}
+
+fn parse_outputs(monitors: &str, workspaces: &str, rules: &str) -> Result<Outputs, String> {
+    let monitors: Vec<JsonMonitor> = serde_json::from_str(monitors)
+        .map_err(|error| format!("invalid Hyprland monitors: {error}"))?;
+    let workspaces: Vec<JsonPlacedWorkspace> = serde_json::from_str(workspaces)
+        .map_err(|error| format!("invalid Hyprland workspaces: {error}"))?;
+    let rules: Vec<JsonWorkspaceRule> = serde_json::from_str(rules)
+        .map_err(|error| format!("invalid Hyprland workspace rules: {error}"))?;
+    let tag = |id: i64| usize::try_from(id).ok().filter(|tag| *tag > 0);
+    Ok(Outputs {
+        active: monitors
+            .into_iter()
+            .filter_map(|monitor| Some((monitor.name, tag(monitor.active_workspace.id)?)))
+            .collect(),
+        placement: workspaces
+            .into_iter()
+            .filter_map(|workspace| Some((tag(workspace.id)?, workspace.monitor)))
+            .collect(),
+        // Only plain numeric rules name a single workspace; selectors such as
+        // `w[tv1]` or `r[1-3]` are style rules, not placements.
+        rules: rules
+            .into_iter()
+            .filter_map(|rule| {
+                let id = rule.workspace.trim().parse::<i64>().ok()?;
+                Some((
+                    tag(id)?,
+                    rule.monitor.filter(|monitor| !monitor.is_empty())?,
+                ))
+            })
+            .collect(),
+    })
+}
+
+pub fn get_outputs() -> Result<Outputs, String> {
+    parse_outputs(
+        &request("j/monitors")?,
+        &request("j/workspaces")?,
+        &request("j/workspacerules")?,
+    )
+}
+
+/* What one output's bars show. `shown` is None for "every workspace", used
+ * when the output is unknown to Hyprland or no output name is available.
+ */
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct View {
+    pub shown: Option<BTreeSet<usize>>,
+    /* The workspace this output currently shows, if known. */
+    pub active: Option<usize>,
+}
+
+impl View {
+    pub fn all() -> Self {
+        Self::default()
+    }
+
+    pub fn shows(&self, tag: usize) -> bool {
+        self.shown.as_ref().is_none_or(|shown| shown.contains(&tag))
+    }
+
+    /* Workspaces filtered to this view, with each one's active flag set
+     * from this output's visible workspace rather than global focus. */
+    pub fn filter(&self, workspaces: &Workspaces) -> Workspaces {
+        workspaces
+            .iter()
+            .filter(|(tag, _)| self.shows(**tag))
+            .map(|(tag, workspace)| (*tag, workspace.clone()))
+            .collect()
+    }
+
+    pub fn is_active(&self, workspace: &Workspace) -> bool {
+        self.active
+            .map_or(workspace.active, |active| active == workspace.tag)
+    }
+}
+
+/* Decide which workspaces `output` shows. A workspace belongs to the output
+ * it currently sits on; otherwise to its configured output, then to its
+ * Hyprland rule's output. An output that owns no workspace by configuration
+ * or rule also takes every workspace nobody owns, so setups without any
+ * assignment keep one bar per output showing that output's workspaces.
+ */
+pub fn view(
+    output: Option<&str>,
+    count: usize,
+    configured: &BTreeMap<String, Vec<usize>>,
+    outputs: &Outputs,
+) -> View {
+    let Some(output) = output.filter(|output| outputs.active.contains_key(*output)) else {
+        return View::all();
+    };
+    let mut assigned = outputs.rules.clone();
+    for (name, tags) in configured {
+        for tag in tags {
+            assigned.insert(*tag, name.clone());
+        }
+    }
+    let owns_any = assigned.values().any(|owner| owner == output);
+    let shown = (1..=count)
+        .filter(
+            |tag| match outputs.placement.get(tag).or_else(|| assigned.get(tag)) {
+                Some(owner) => owner == output,
+                None => !owns_any,
+            },
+        )
+        .collect();
+    View {
+        shown: Some(shown),
+        active: outputs.active.get(output).copied(),
+    }
+}
+
+/* Add an empty entry for every output's visible workspace so unfocused
+ * outputs still show their current (possibly empty) workspace. */
+pub fn include_visible(workspaces: &mut Workspaces, outputs: &Outputs) {
+    let mut order = workspaces
+        .values()
+        .map(|workspace| workspace.order + 1)
+        .max()
+        .unwrap_or(0);
+    for tag in outputs.active.values() {
+        workspaces.entry(*tag).or_insert_with(|| {
+            order += 1;
+            Workspace {
+                windows: Vec::new(),
+                tag: *tag,
+                order,
+                active: false,
+            }
+        });
+    }
+}
+
 fn parse_active_window(reply: &str) -> Result<Option<String>, String> {
     let active: JsonActiveWindow = serde_json::from_str(reply)
         .map_err(|error| format!("invalid Hyprland active window: {error}"))?;
@@ -449,6 +645,72 @@ fn parse_active_window(reply: &str) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn outputs() -> Outputs {
+        parse_outputs(
+            r#"[{"name":"DP-1","activeWorkspace":{"id":2,"name":"2"}},
+                {"name":"HDMI-A-1","activeWorkspace":{"id":4,"name":"4"}}]"#,
+            r#"[{"id":2,"name":"2","monitor":"DP-1"},{"id":4,"name":"4","monitor":"HDMI-A-1"},
+                {"id":7,"name":"7","monitor":"HDMI-A-1"},{"id":-98,"name":"special:x","monitor":"DP-1"}]"#,
+            r#"[{"workspaceString":"1","monitor":"DP-1"},{"workspaceString":"4","monitor":"HDMI-A-1"},
+                {"workspaceString":"5","monitor":"HDMI-A-1"},{"workspaceString":"6","monitor":"HDMI-A-1"},
+                {"workspaceString":"w[tv1] f[-1]"}]"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn outputs_ignore_special_workspaces_and_selector_rules() {
+        let outputs = outputs();
+        assert_eq!(outputs.active["HDMI-A-1"], 4);
+        assert_eq!(outputs.placement.len(), 3);
+        assert_eq!(outputs.rules.len(), 4);
+    }
+
+    #[test]
+    fn views_follow_placement_then_config_then_rules() {
+        let outputs = outputs();
+        let none = BTreeMap::new();
+        let hdmi = view(Some("HDMI-A-1"), 10, &none, &outputs);
+        // 7 was moved to HDMI-A-1 and follows its current placement.
+        assert_eq!(hdmi.shown, Some(BTreeSet::from([4, 5, 6, 7])));
+        assert_eq!(hdmi.active, Some(4));
+        let dp = view(Some("DP-1"), 10, &none, &outputs);
+        assert_eq!(dp.shown, Some(BTreeSet::from([1, 2])));
+        let configured = BTreeMap::from([("DP-1".to_string(), vec![3, 8, 9, 10])]);
+        let dp = view(Some("DP-1"), 10, &configured, &outputs);
+        assert_eq!(dp.shown, Some(BTreeSet::from([1, 2, 3, 8, 9, 10])));
+        assert_eq!(view(Some("DP-9"), 10, &none, &outputs), View::all());
+        assert_eq!(view(None, 10, &none, &outputs), View::all());
+    }
+
+    #[test]
+    fn outputs_without_assignments_take_unowned_workspaces() {
+        let mut outputs = outputs();
+        outputs.rules.clear();
+        let dp = view(Some("DP-1"), 9, &BTreeMap::new(), &outputs);
+        assert_eq!(dp.shown, Some(BTreeSet::from([1, 2, 3, 5, 6, 8, 9])));
+        let hdmi = view(Some("HDMI-A-1"), 9, &BTreeMap::new(), &outputs);
+        assert_eq!(hdmi.shown, Some(BTreeSet::from([1, 3, 4, 5, 6, 7, 8, 9])));
+    }
+
+    #[test]
+    fn layout_and_submap_events_do_not_refresh_workspaces() {
+        let layout = HyprEvent::parse("activelayout", "at-translated-set-2-keyboard,English (US)");
+        assert_eq!(
+            layout,
+            Some(HyprEvent::Layout(
+                "at-translated-set-2-keyboard".into(),
+                "English (US)".into()
+            ))
+        );
+        assert!(!layout.unwrap().refreshes_workspaces());
+        assert_eq!(
+            HyprEvent::parse("submap", ""),
+            Some(HyprEvent::Submap(String::new()))
+        );
+        assert!(HyprEvent::Workspace.refreshes_workspaces());
+    }
     use std::net::Shutdown;
 
     #[test]

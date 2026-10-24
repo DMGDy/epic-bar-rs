@@ -10,7 +10,11 @@ use crate::network;
 
 const SAMPLES: usize = 60;
 
-fn menu(child: &impl IsA<gtk::Widget>, body: &impl IsA<gtk::Widget>, name: &str) -> MenuButton {
+pub(crate) fn menu(
+    child: &impl IsA<gtk::Widget>,
+    body: &impl IsA<gtk::Widget>,
+    name: &str,
+) -> MenuButton {
     let popover = Popover::builder()
         .css_classes(["bar-popover"])
         .position(gtk::PositionType::Bottom)
@@ -36,7 +40,7 @@ fn menu(child: &impl IsA<gtk::Widget>, body: &impl IsA<gtk::Widget>, name: &str)
     button
 }
 
-fn body(title: &str) -> Box {
+pub(crate) fn body(title: &str) -> Box {
     let body = Box::new(Orientation::Vertical, 10);
     let heading = Label::builder()
         .label(title)
@@ -157,6 +161,32 @@ impl Usage {
         }
     }
 
+    #[cfg(test)]
+    pub fn update(&self, value: Option<f64>, detail: &str) {
+        self.updater().update(value, detail);
+    }
+
+    /* The popup's contents without the button, for listeners that must not
+     * keep a removed bar's button alive. */
+    pub fn updater(&self) -> UsageUpdater {
+        UsageUpdater {
+            detail: self.detail.clone(),
+            summary: self.summary.clone(),
+            graph: self.graph.clone(),
+            history: self.history.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct UsageUpdater {
+    detail: Label,
+    summary: Label,
+    graph: DrawingArea,
+    history: Rc<RefCell<History>>,
+}
+
+impl UsageUpdater {
     pub fn update(&self, value: Option<f64>, detail: &str) {
         self.detail.set_text(detail);
         let mut history = self.history.borrow_mut();
