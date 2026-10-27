@@ -259,14 +259,18 @@ struct JsonClient {
     monitor: i64,
 }
 
+/* Special workspaces (scratchpads) have no numeric id in Hyprland's
+ * replies, only a "special:<name>" name; they are not shown in the bar. */
 #[derive(Deserialize)]
 struct JsonWorkspaceRef {
-    id: i64,
+    #[serde(default)]
+    id: Option<i64>,
 }
 
 #[derive(Deserialize)]
 struct JsonActiveWorkspace {
-    id: i64,
+    #[serde(default)]
+    id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -285,10 +289,9 @@ fn parse_windows(reply: &str) -> Result<Vec<Window>, serde_json::Error> {
 
     for client in clients {
         // the bar models workspaces as positive usize tags; skip special
-        // (negative id) workspaces the old usize parser could not represent
-        let tag = match usize::try_from(client.workspace.id) {
-            Ok(tag) => tag,
-            Err(_) => continue,
+        // workspaces (negative or missing id)
+        let Some(tag) = client.workspace.id.and_then(|id| usize::try_from(id).ok()) else {
+            continue;
         };
 
         // info = current title, keeping the pdf-basename special case
@@ -424,9 +427,8 @@ fn check_empty_active_workspace(workspaces: &mut Workspaces) -> Result<(), Strin
     let active: JsonActiveWorkspace = serde_json::from_str(&reply)
         .map_err(|error| format!("invalid Hyprland active workspace: {error}"))?;
 
-    let tag = match usize::try_from(active.id) {
-        Ok(tag) => tag,
-        Err(_) => return Ok(()),
+    let Some(tag) = active.id.and_then(|id| usize::try_from(id).ok()) else {
+        return Ok(());
     };
 
     set_active_workspace(workspaces, tag);
@@ -486,7 +488,8 @@ struct JsonMonitor {
 
 #[derive(Deserialize)]
 struct JsonPlacedWorkspace {
-    id: i64,
+    #[serde(default)]
+    id: Option<i64>,
     monitor: String,
 }
 
@@ -509,11 +512,11 @@ fn parse_outputs(monitors: &str, workspaces: &str, rules: &str) -> Result<Output
     Ok(Outputs {
         active: monitors
             .into_iter()
-            .filter_map(|monitor| Some((monitor.name, tag(monitor.active_workspace.id)?)))
+            .filter_map(|monitor| Some((monitor.name, tag(monitor.active_workspace.id?)?)))
             .collect(),
         placement: workspaces
             .into_iter()
-            .filter_map(|workspace| Some((tag(workspace.id)?, workspace.monitor)))
+            .filter_map(|workspace| Some((tag(workspace.id?)?, workspace.monitor)))
             .collect(),
         // Only plain numeric rules name a single workspace; selectors such as
         // `w[tv1]` or `r[1-3]` are style rules, not placements.
@@ -657,6 +660,28 @@ mod tests {
                 {"workspaceString":"w[tv1] f[-1]"}]"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn special_workspaces_without_ids_are_skipped_not_fatal() {
+        // Hyprland reports scratchpad (special) workspaces without an "id".
+        let windows = parse_windows(
+            r#"[{"address":"0x5dfa88fa3e20","title":"~","class":"scratchpad",
+                 "initialTitle":"kitty","focusHistoryID":0,
+                 "workspace":{"address":"special:scratch","type":"special","name":"special:scratch"}},
+                {"address":"0xabc","title":"Firefox","class":"firefox",
+                 "initialTitle":"Firefox","focusHistoryID":1,"workspace":{"id":2,"name":"2"}}]"#,
+        )
+        .unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].tag, 2);
+        let outputs = parse_outputs(
+            r#"[{"name":"DP-1","activeWorkspace":{"id":1,"name":"1"}}]"#,
+            r#"[{"id":1,"name":"1","monitor":"DP-1"},{"name":"special:scratch","monitor":"DP-1"}]"#,
+            "[]",
+        )
+        .unwrap();
+        assert_eq!(outputs.placement, BTreeMap::from([(1, "DP-1".to_string())]));
     }
 
     #[test]
