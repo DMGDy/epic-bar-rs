@@ -122,7 +122,13 @@ mod tests {
             "themes/autumn-light.css",
             "themes/autumn-dark.css",
         ] {
-            load_file(&root.join(theme)).unwrap();
+            let provider = load_file(&root.join(theme)).unwrap();
+            crate::init_style(&provider);
+            crate::tests::assert_metric_widths();
+            gtk::style_context_remove_provider_for_display(
+                &gtk::gdk::Display::default().unwrap(),
+                &provider,
+            );
         }
         let provider = load_file(&root.join("themes/autumn-light.css")).unwrap();
         crate::init_style(&provider);

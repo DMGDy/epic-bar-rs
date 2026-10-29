@@ -73,6 +73,14 @@ The top bar can show, in any order (see [Configuration](#configuration)):
 Modules whose hardware or service is missing (no battery, backlight, GPU,
 `pactl`, or Dunst) hide themselves.
 
+Numeric status fields reserve room for their usual ranges, so going from
+`99%` to `100%` does not push the other modules around. Notification counts keep
+their space when empty too. Longer-than-usual values can still grow rather
+than being cut off.
+
+Click-open popups and tray menus fade in over 160 ms; their size and position
+stay anchored to the button. With GTK animations disabled they open immediately.
+
 The bottom bar shows open windows grouped by workspace, with application icons
 and live window titles. Clicking a window focuses it, including across
 workspaces. The groups and windows move into most-recently-used order rather

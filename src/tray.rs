@@ -642,6 +642,7 @@ impl Tray {
             let model = gio::Menu::new();
             build_menu(&layout, &model, &actions, &connection, &bus, &menu);
             let popover = PopoverMenu::from_model(Some(&model));
+            crate::panels::animate_popover(&popover);
             popover.add_css_class("bar-popover");
             popover.add_css_class("tray-menu");
             popover.insert_action_group("dbusmenu", Some(&actions));

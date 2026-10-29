@@ -128,7 +128,7 @@ impl Notifications {
             .spacing(4)
             .build();
         let icon = crate::status_icon("preferences-system-notifications-symbolic");
-        let count = crate::metric_label("notification-label");
+        let count = crate::reserved_metric_label("notification-label", 4);
         contents.append(&icon);
         contents.append(&count);
         let button = Button::builder()
@@ -162,17 +162,52 @@ impl Notifications {
             } else {
                 contents.remove_css_class("paused");
             }
-            match state.badge() {
-                Some(badge) => {
-                    count.set_text(&badge.to_string());
-                    count.set_visible(true);
-                }
-                None => count.set_visible(false),
-            }
+            count.set_text(
+                &state
+                    .badge()
+                    .map_or_else(String::new, |badge| badge.to_string()),
+            );
             button.set_tooltip_text(Some(&state.tooltip()));
             true
         });
         button
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn assert_widgets() {
+    let (poke, _) = mpsc::channel();
+    let notifications = Rc::new(Notifications {
+        hub: Hub::new(),
+        poke,
+    });
+    let button = notifications.widget();
+    let mut previous = None;
+    for count in [0, 1, 9, 10, 99, 100, 999, 0] {
+        notifications.hub.publish(Ok(State {
+            displayed: count,
+            ..State::default()
+        }));
+        let contents = button.child().unwrap().downcast::<Box>().unwrap();
+        let label = contents
+            .last_child()
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap();
+        assert!(label.is_visible());
+        assert_eq!(
+            label.text(),
+            if count == 0 {
+                String::new()
+            } else {
+                count.to_string()
+            }
+        );
+        let width = button.measure(Orientation::Horizontal, -1).1;
+        if let Some(previous) = previous {
+            assert_eq!(width, previous, "notification badge moved adjacent modules");
+        }
+        previous = Some(width);
     }
 }
 

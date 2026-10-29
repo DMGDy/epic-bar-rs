@@ -9,6 +9,55 @@ use gtk::{glib, prelude::*, Box, Button, DrawingArea, Label, MenuButton, Orienta
 use crate::network;
 
 const SAMPLES: usize = 60;
+const POPUP_OPEN_US: i64 = 160_000;
+
+fn popup_opacity(elapsed: i64) -> f64 {
+    let progress = (elapsed as f64 / POPUP_OPEN_US as f64).clamp(0.0, 1.0);
+    1.0 - (1.0 - progress).powi(3)
+}
+
+pub(crate) fn animate_popover(popover: &impl IsA<Popover>) {
+    let popover = popover.as_ref();
+    let tick: Rc<RefCell<Option<gtk::TickCallbackId>>> = Rc::default();
+    let mapped_tick = tick.clone();
+    popover.connect_map(move |popover| {
+        if let Some(tick) = mapped_tick.borrow_mut().take() {
+            tick.remove();
+        }
+        if !popover.settings().property::<bool>("gtk-enable-animations") {
+            popover.set_opacity(1.0);
+            return;
+        }
+        popover.set_opacity(0.0);
+        let started = Cell::new(None);
+        let frame_tick = mapped_tick.clone();
+        let callback = popover.add_tick_callback(move |popover, clock| {
+            let now = clock.frame_time();
+            let start = started.get().unwrap_or(now);
+            started.set(Some(start));
+            let animate = popover.settings().property::<bool>("gtk-enable-animations");
+            let opacity = if animate && popover.is_mapped() {
+                popup_opacity(now - start)
+            } else {
+                1.0
+            };
+            popover.set_opacity(opacity);
+            if opacity < 1.0 {
+                glib::ControlFlow::Continue
+            } else {
+                frame_tick.borrow_mut().take();
+                glib::ControlFlow::Break
+            }
+        });
+        *mapped_tick.borrow_mut() = Some(callback);
+    });
+    popover.connect_unmap(move |popover| {
+        if let Some(tick) = tick.borrow_mut().take() {
+            tick.remove();
+        }
+        popover.set_opacity(1.0);
+    });
+}
 
 pub(crate) fn menu(
     child: &impl IsA<gtk::Widget>,
@@ -22,6 +71,7 @@ pub(crate) fn menu(
         .has_arrow(true)
         .child(body)
         .build();
+    animate_popover(&popover);
     let button = MenuButton::builder()
         .css_name(name)
         .css_classes(["status-popup"])
@@ -343,6 +393,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn popup_fade_eases_out_and_finishes() {
+        assert_eq!(popup_opacity(-1), 0.0);
+        assert_eq!(popup_opacity(0), 0.0);
+        assert_eq!(popup_opacity(POPUP_OPEN_US / 2), 0.875);
+        assert_eq!(popup_opacity(POPUP_OPEN_US), 1.0);
+        assert_eq!(popup_opacity(POPUP_OPEN_US * 2), 1.0);
+        let mut previous = 0.0;
+        for elapsed in (0..=POPUP_OPEN_US).step_by(1000) {
+            let opacity = popup_opacity(elapsed);
+            assert!((previous..=1.0).contains(&opacity));
+            previous = opacity;
+        }
+    }
+
+    #[test]
     fn history_is_bounded_and_keeps_missing_samples_as_gaps() {
         let mut history = History::default();
         assert_eq!(history.summary(), "Waiting for valid samples");
@@ -386,4 +451,112 @@ pub(crate) fn assert_widgets() {
         usage.graph.color(),
     )
     .unwrap();
+    assert_popup_animation(&usage.button);
+    let weak_popover = usage.button.popover().unwrap().downgrade();
+    drop(usage);
+    assert!(
+        weak_popover.upgrade().is_none(),
+        "popup animation retained its widget"
+    );
+
+    let model = gtk::gio::Menu::new();
+    model.append(Some("Fixture"), None);
+    let popover = gtk::PopoverMenu::from_model(Some(&model));
+    animate_popover(&popover);
+    let tray = MenuButton::builder().popover(&popover).build();
+    assert_popup_animation(&tray);
+}
+
+#[cfg(test)]
+fn assert_popup_animation(button: &MenuButton) {
+    use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
+    use std::time::{Duration, Instant};
+
+    let popover = button.popover().unwrap();
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".popup-animation-test contents { background: transparent; border-color: transparent; box-shadow: none; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_USER,
+    );
+    popover.add_css_class("popup-animation-test");
+    popover.set_has_arrow(false);
+    popover.set_autohide(false);
+    popover.child().unwrap().set_opacity(0.0);
+    let root = gtk::Window::builder()
+        .default_width(180)
+        .default_height(48)
+        .opacity(0.0)
+        .child(button)
+        .build();
+    LayerShell::init_layer_shell(&root);
+    LayerShell::set_namespace(&root, Some("epic-bar-popup-test"));
+    LayerShell::set_layer(&root, Layer::Background);
+    LayerShell::set_keyboard_mode(&root, KeyboardMode::None);
+    let wait = |condition: &dyn Fn() -> bool| {
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !condition() && Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            condition(),
+            "popup animation did not reach its expected state"
+        );
+    };
+    let settings = root.settings();
+    let original = settings.property::<bool>("gtk-enable-animations");
+    settings.set_property("gtk-enable-animations", true);
+    root.set_visible(true);
+    wait(&|| button.is_mapped() && button.width() > 0);
+    let anchor_width = button.measure(Orientation::Horizontal, -1).1;
+    button.set_active(true);
+    wait(&|| popover.is_mapped() && popover.width() > 0);
+    assert!(popover.opacity() < 1.0, "popup appeared without animating");
+    let size = (popover.width(), popover.height());
+    wait(&|| popover.opacity() > 0.0);
+    assert!(
+        popover.opacity() < 1.0,
+        "popup fade skipped its intermediate frames"
+    );
+    settings.set_property("gtk-enable-animations", false);
+    wait(&|| popover.opacity() == 1.0);
+    assert_eq!((popover.width(), popover.height()), size);
+    assert_eq!(button.measure(Orientation::Horizontal, -1).1, anchor_width);
+    button.set_active(false);
+    wait(&|| !popover.is_mapped());
+    button.set_active(true);
+    wait(&|| popover.is_mapped());
+    assert_eq!(
+        popover.opacity(),
+        1.0,
+        "reduced motion must open immediately"
+    );
+    button.set_active(false);
+    wait(&|| !popover.is_mapped());
+    settings.set_property("gtk-enable-animations", true);
+    for _ in 0..3 {
+        button.set_active(true);
+        wait(&|| popover.is_mapped());
+        assert!(popover.opacity() < 1.0);
+        button.set_active(false);
+        wait(&|| !popover.is_mapped());
+        assert_eq!(popover.opacity(), 1.0, "closing must cancel the old fade");
+    }
+    button.set_active(true);
+    wait(&|| popover.is_mapped());
+    wait(&|| popover.opacity() == 1.0);
+    assert_eq!(button.measure(Orientation::Horizontal, -1).1, anchor_width);
+    button.set_active(false);
+    wait(&|| !popover.is_mapped());
+    root.destroy();
+    settings.set_property("gtk-enable-animations", original);
+    gtk::style_context_remove_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &provider,
+    );
 }

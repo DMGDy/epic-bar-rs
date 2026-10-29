@@ -492,8 +492,8 @@ fn network_module(hub: &Rc<Hub<NetworkSnapshot>>) -> Box {
 fn cpu_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::MenuButton {
     let group = status_group("status-cpu");
     let icon = crate::status_icon("utilities-system-monitor-symbolic");
-    let load = crate::metric_label("cpu-load-label");
-    let frequency = crate::metric_label("cpu-label");
+    let load = crate::reserved_metric_label("cpu-load-label", 5);
+    let frequency = crate::reserved_metric_label("cpu-label", 16);
     frequency.set_visible(false);
     group.append(&icon);
     group.append(&load);
@@ -535,8 +535,8 @@ fn cpu_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::Menu
 fn memory_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::MenuButton {
     let group = status_group("status-memory");
     let icon = crate::status_icon("drive-harddisk-symbolic");
-    let label = crate::metric_label("mem-label");
-    let detail_label = crate::metric_label("mem-label");
+    let label = crate::reserved_metric_label("mem-label", 5);
+    let detail_label = crate::reserved_metric_label("mem-label", 20);
     detail_label.set_visible(false);
     group.append(&icon);
     group.append(&label);
@@ -575,7 +575,7 @@ fn memory_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::M
 fn gpu_module(hub: &Rc<Hub<gpu::Snapshot>>) -> gtk::MenuButton {
     let group = status_group("status-gpu");
     let icon = crate::status_icon("video-display-symbolic");
-    let label = crate::metric_label("gpu-label");
+    let label = crate::reserved_metric_label("gpu-label", 5);
     group.append(&icon);
     group.append(&label);
     let popup = panels::Usage::new(&group, "GPU usage", "gpu-history");
@@ -628,7 +628,7 @@ fn gpu_module(hub: &Rc<Hub<gpu::Snapshot>>) -> gtk::MenuButton {
 fn battery_module(hub: &Rc<Hub<status::Sample>>) -> Box {
     let group = status_group("status-battery");
     let image = crate::status_icon("battery-missing-symbolic");
-    let label = crate::metric_label("battery-label");
+    let label = crate::reserved_metric_label("battery-label", 5);
     group.append(&image);
     group.append(&label);
     let weak = group.downgrade();

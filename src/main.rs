@@ -200,6 +200,13 @@ fn metric_label(css_name: &str) -> Label {
     label
 }
 
+fn reserved_metric_label(css_name: &str, width_chars: i32) -> Label {
+    let label = metric_label(css_name);
+    // Reserve normal ranges without clipping exceptionally long values.
+    label.set_width_chars(width_chars);
+    label
+}
+
 fn status_icon(name: &str) -> Image {
     Image::builder()
         .icon_name(name)
@@ -437,6 +444,99 @@ mod tests {
         settings.set_property("gtk-application-prefer-dark-theme", original);
     }
 
+    pub(crate) fn assert_metric_widths() {
+        for (name, width_chars, values) in [
+            (
+                "cpu-load-label",
+                5,
+                vec!["--", "1%", "9%", "10%", "99%", "100%"],
+            ),
+            ("gpu-label", 5, vec!["N/A", "9%", "99%", "100%"]),
+            ("battery-label", 5, vec!["1%", "99%", "100%"]),
+            ("brightness-label", 5, vec!["1%", "99%", "100%"]),
+            (
+                "volume-label",
+                6,
+                vec!["1%", "99%", "100%", "150%", "Muted"],
+            ),
+            (
+                "notification-label",
+                4,
+                vec!["", "1", "9", "10", "99", "100", "999"],
+            ),
+            (
+                "cpu-label",
+                16,
+                vec![
+                    "999 MHz",
+                    "5.2 GHz",
+                    "12.0 GHz",
+                    "5.2 GHz 99°C",
+                    "5.2 GHz 100°C",
+                ],
+            ),
+            ("mem-label", 5, vec!["N/A", "1%", "99%", "100%"]),
+            (
+                "mem-label",
+                20,
+                vec![
+                    "1.0/8.0 GiB",
+                    "99.9/128.0 GiB",
+                    "100.0/128.0 GiB",
+                    "9999.9/9999.9 GiB",
+                ],
+            ),
+            (
+                "date-label",
+                -1,
+                vec!["2026/01/11", "2026/10/20", "2026/12/31"],
+            ),
+            ("date-label", -1, vec!["01:11:11", "23:59:59"]),
+        ] {
+            let label = if width_chars > 0 {
+                reserved_metric_label(name, width_chars)
+            } else {
+                metric_label(name)
+            };
+            let row = Box::new(Orientation::Horizontal, 4);
+            let neighbor = Label::new(Some("Next"));
+            row.append(&label);
+            row.append(&neighbor);
+            let mut previous = None;
+            for value in values {
+                label.set_text(value);
+                let (_, width, _, _) = row.measure(Orientation::Horizontal, -1);
+                let (_, height, _, _) = row.measure(Orientation::Vertical, width);
+                row.allocate(width, height, -1, None);
+                assert!(
+                    !label.layout().is_ellipsized(),
+                    "metric was clipped: {name} {value}"
+                );
+                let bounds = neighbor.compute_bounds(&row).unwrap();
+                let geometry = (width, bounds.x());
+                if let Some(previous) = previous {
+                    assert_eq!(
+                        geometry, previous,
+                        "metric moved its neighbor: {name} {value}"
+                    );
+                }
+                previous = Some(geometry);
+            }
+        }
+        let label = reserved_metric_label("notification-label", 4);
+        label.set_text("12345678901234567890");
+        let (_, width, _, _) = label.measure(Orientation::Horizontal, -1);
+        let (_, height, _, _) = label.measure(Orientation::Vertical, width);
+        label.allocate(width, height, -1, None);
+        assert!(
+            !label.layout().is_ellipsized(),
+            "larger values must be allowed to grow"
+        );
+        let custom_clock = metric_label("date-label");
+        custom_clock.set_text("Tuesday, October 27, 2026");
+        assert_eq!(custom_clock.width_chars(), -1);
+    }
+
     pub(crate) fn assert_refined_widgets() {
         let icons = gtk::IconTheme::for_display(&Display::default().unwrap());
         for name in [
@@ -462,40 +562,7 @@ mod tests {
             assert!(icons.has_icon(name), "missing symbolic icon: {name}");
         }
 
-        for (name, values) in [
-            ("cpu-load-label", vec!["1%", "99%", "100%"]),
-            ("cpu-label", vec!["999 MHz", "5.2 GHz", "12.0 GHz"]),
-            ("mem-label", vec!["1.0/8.0 GiB", "128.0/128.0 GiB"]),
-            ("date-label", vec!["2026/01/11", "2026/10/20", "2026/12/31"]),
-            ("date-label", vec!["01:11:11", "23:59:59"]),
-        ] {
-            let label = metric_label(name);
-            let mut previous = None;
-            for value in values {
-                label.set_text(value);
-                let (_, natural, _, _) = label.measure(Orientation::Horizontal, -1);
-                let (_, height, _, _) = label.measure(Orientation::Vertical, natural);
-                label.allocate(natural, height, -1, None);
-                assert!(
-                    !label.layout().is_ellipsized(),
-                    "metric was clipped: {value}"
-                );
-                assert_eq!(
-                    natural,
-                    label.layout().pixel_size().0,
-                    "metric has unused character slots: {value}"
-                );
-                assert_eq!(
-                    label.layout_offsets().0,
-                    0,
-                    "value is separated from its icon"
-                );
-                if let Some(previous) = previous.filter(|_| name == "date-label") {
-                    assert_eq!(natural, previous, "metric width changed for {value}");
-                }
-                previous = Some(natural);
-            }
-        }
+        assert_metric_widths();
 
         let networks = vec![
             network::Network {
@@ -893,7 +960,7 @@ mod tests {
         assert_eq!(rows.first_child().as_ref(), Some(date.upcast_ref()));
         assert_eq!(rows.last_child().as_ref(), Some(time.upcast_ref()));
 
-        let ram = metric_label("mem-label");
+        let ram = reserved_metric_label("mem-label", 20);
         ram.set_text("26.9/125.1 GiB");
         let memory_group = Box::builder()
             .css_classes(["status-group"])
@@ -952,9 +1019,7 @@ mod tests {
                 }
                 let ram_bounds = ram.compute_bounds(&row).unwrap();
                 let calendar_bounds = calendar.compute_bounds(&row).unwrap();
-                let ram_right = ram_bounds.x()
-                    + ram.layout_offsets().0 as f32
-                    + ram.layout().pixel_size().0 as f32;
+                let ram_right = ram_bounds.x() + ram_bounds.width();
                 let gap = calendar_bounds.x() - ram_right;
                 assert!(
                     (8.0..=16.0).contains(&gap),
@@ -981,6 +1046,7 @@ mod tests {
         crate::tasks::assert_widgets();
         crate::icons::assert_widgets();
         crate::panels::assert_widgets();
+        crate::notifications::assert_widgets();
         crate::media::assert_widgets();
         crate::marquee::assert_widgets();
         crate::previews::assert_widgets();
