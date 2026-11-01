@@ -492,12 +492,13 @@ fn network_module(hub: &Rc<Hub<NetworkSnapshot>>) -> Box {
 fn cpu_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::MenuButton {
     let group = status_group("status-cpu");
     let icon = crate::status_icon("utilities-system-monitor-symbolic");
-    let load = crate::reserved_metric_label("cpu-load-label", 5);
-    let frequency = crate::reserved_metric_label("cpu-label", 16);
+    let load_slot = crate::reserved_metric_label("cpu-load-label", crate::PERCENT);
+    let frequency_slot = crate::reserved_metric_label("cpu-label", &["9.9 GHz 100°C"]);
+    let (load, frequency) = (load_slot.label(), frequency_slot.label());
     frequency.set_visible(false);
     group.append(&icon);
-    group.append(&load);
-    group.append(&frequency);
+    group.append(&load_slot);
+    group.append(&frequency_slot);
     details.cpu = Some(frequency.clone());
     let popup = panels::Usage::new(&group, "CPU usage", "cpu-history");
     let updater = popup.updater();
@@ -535,12 +536,13 @@ fn cpu_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::Menu
 fn memory_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::MenuButton {
     let group = status_group("status-memory");
     let icon = crate::status_icon("drive-harddisk-symbolic");
-    let label = crate::reserved_metric_label("mem-label", 5);
-    let detail_label = crate::reserved_metric_label("mem-label", 20);
+    let slot = crate::reserved_metric_label("mem-label", crate::PERCENT);
+    let detail_slot = crate::reserved_metric_label("mem-label", &["99.9/999.9 GiB"]);
+    let (label, detail_label) = (slot.label(), detail_slot.label());
     detail_label.set_visible(false);
     group.append(&icon);
-    group.append(&label);
-    group.append(&detail_label);
+    group.append(&slot);
+    group.append(&detail_slot);
     details.memory = Some((label.clone(), detail_label.clone()));
     let popup = panels::Usage::new(&group, "Memory usage", "memory-history");
     let updater = popup.updater();
@@ -575,9 +577,10 @@ fn memory_module(hub: &Rc<Hub<status::Sample>>, details: &mut Details) -> gtk::M
 fn gpu_module(hub: &Rc<Hub<gpu::Snapshot>>) -> gtk::MenuButton {
     let group = status_group("status-gpu");
     let icon = crate::status_icon("video-display-symbolic");
-    let label = crate::reserved_metric_label("gpu-label", 5);
+    let slot = crate::reserved_metric_label("gpu-label", crate::PERCENT);
+    let label = slot.label();
     group.append(&icon);
-    group.append(&label);
+    group.append(&slot);
     let popup = panels::Usage::new(&group, "GPU usage", "gpu-history");
     let updater = popup.updater();
     popup.button.set_visible(false);
@@ -628,9 +631,10 @@ fn gpu_module(hub: &Rc<Hub<gpu::Snapshot>>) -> gtk::MenuButton {
 fn battery_module(hub: &Rc<Hub<status::Sample>>) -> Box {
     let group = status_group("status-battery");
     let image = crate::status_icon("battery-missing-symbolic");
-    let label = crate::reserved_metric_label("battery-label", 5);
+    let slot = crate::reserved_metric_label("battery-label", crate::PERCENT);
+    let label = slot.label();
     group.append(&image);
-    group.append(&label);
+    group.append(&slot);
     let weak = group.downgrade();
     hub.subscribe(move |sample| {
         let Some(group) = weak.upgrade() else {

@@ -220,9 +220,10 @@ pub fn widget(hub: &Rc<Hub<Snapshot>>, step: u32) -> MenuButton {
         .spacing(4)
         .build();
     let icon = crate::status_icon("audio-volume-medium-symbolic");
-    let label = crate::reserved_metric_label("volume-label", 6);
+    let slot = crate::reserved_metric_label("volume-label", crate::PERCENT);
+    let label = slot.label();
     group.append(&icon);
-    group.append(&label);
+    group.append(&slot);
 
     let body = panels::body("Volume");
     let scale = Scale::with_range(Orientation::Horizontal, 0.0, 100.0, 1.0);

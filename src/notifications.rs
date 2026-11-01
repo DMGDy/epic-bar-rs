@@ -128,9 +128,10 @@ impl Notifications {
             .spacing(4)
             .build();
         let icon = crate::status_icon("preferences-system-notifications-symbolic");
-        let count = crate::reserved_metric_label("notification-label", 4);
+        let slot = crate::reserved_metric_label("notification-label", &["99"]);
+        let count = slot.label();
         contents.append(&icon);
-        contents.append(&count);
+        contents.append(&slot);
         let button = Button::builder()
             .css_classes(["bar-button", "notifications-button"])
             .child(&contents)
@@ -162,11 +163,14 @@ impl Notifications {
             } else {
                 contents.remove_css_class("paused");
             }
-            count.set_text(
-                &state
-                    .badge()
-                    .map_or_else(String::new, |badge| badge.to_string()),
-            );
+            // No blank slot beside the bell when nothing is pending.
+            match state.badge() {
+                Some(badge) => {
+                    count.set_text(&badge.to_string());
+                    count.set_visible(true);
+                }
+                None => count.set_visible(false),
+            }
             button.set_tooltip_text(Some(&state.tooltip()));
             true
         });
@@ -182,27 +186,25 @@ pub(crate) fn assert_widgets() {
         poke,
     });
     let button = notifications.widget();
+    let contents = button.child().unwrap().downcast::<Box>().unwrap();
+    let slot = contents.last_child().unwrap();
+    let label = slot
+        .first_child()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
     let mut previous = None;
-    for count in [0, 1, 9, 10, 99, 100, 999, 0] {
+    for count in [0, 1, 9, 10, 99, 0] {
         notifications.hub.publish(Ok(State {
             displayed: count,
             ..State::default()
         }));
-        let contents = button.child().unwrap().downcast::<Box>().unwrap();
-        let label = contents
-            .last_child()
-            .unwrap()
-            .downcast::<gtk::Label>()
-            .unwrap();
-        assert!(label.is_visible());
-        assert_eq!(
-            label.text(),
-            if count == 0 {
-                String::new()
-            } else {
-                count.to_string()
-            }
-        );
+        assert_eq!(label.is_visible(), count > 0);
+        assert_eq!(slot.is_visible(), count > 0, "empty badge kept its space");
+        if count == 0 {
+            continue;
+        }
+        assert_eq!(label.text(), count.to_string());
         let width = button.measure(Orientation::Horizontal, -1).1;
         if let Some(previous) = previous {
             assert_eq!(width, previous, "notification badge moved adjacent modules");

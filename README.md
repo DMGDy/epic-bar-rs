@@ -73,10 +73,12 @@ The top bar can show, in any order (see [Configuration](#configuration)):
 Modules whose hardware or service is missing (no battery, backlight, GPU,
 `pactl`, or Dunst) hide themselves.
 
-Numeric status fields reserve room for their usual ranges, so going from
-`99%` to `100%` does not push the other modules around. Notification counts keep
-their space when empty too. Longer-than-usual values can still grow rather
-than being cut off.
+Numeric status fields reserve exactly the width of their widest usual value
+(`100%` for percentages), measured in the theme's font with tabular digits, and
+centre within it, so going from `9%` to `100%` does not push the other
+modules around. The notification count hides when nothing is pending and
+reserves two digits otherwise. Longer-than-usual values (such as `Muted`) can
+still grow rather than being cut off.
 
 Click-open popups and tray menus fade in over 160 ms; their size and position
 stay anchored to the button. With GTK animations disabled they open immediately.

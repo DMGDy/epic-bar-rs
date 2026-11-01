@@ -124,7 +124,8 @@ mod tests {
         ] {
             let provider = load_file(&root.join(theme)).unwrap();
             crate::init_style(&provider);
-            crate::tests::assert_metric_widths();
+            // Windows 11 sizes some metrics at 15px and others at 16px.
+            crate::tests::assert_metric_widths(!theme.contains("windows-11"));
             gtk::style_context_remove_provider_for_display(
                 &gtk::gdk::Display::default().unwrap(),
                 &provider,

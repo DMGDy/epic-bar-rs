@@ -108,8 +108,9 @@ pub fn widget(backlight: Backlight, hub: &Rc<Hub<Snapshot>>, step: u32) -> Box {
         .visible(false)
         .build();
     group.append(&crate::status_icon("display-brightness-symbolic"));
-    let label: Label = crate::reserved_metric_label("brightness-label", 5);
-    group.append(&label);
+    let slot = crate::reserved_metric_label("brightness-label", crate::PERCENT);
+    let label: Label = slot.label();
+    group.append(&slot);
     let current = Rc::new(std::cell::Cell::new(None::<u32>));
     let scroll_current = current.clone();
     let name = backlight.name.clone();

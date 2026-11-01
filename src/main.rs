@@ -32,6 +32,7 @@ mod icons;
 mod keyboard;
 mod marquee;
 mod media;
+mod metric;
 mod network;
 mod notifications;
 mod panels;
@@ -200,11 +201,13 @@ fn metric_label(css_name: &str) -> Label {
     label
 }
 
-fn reserved_metric_label(css_name: &str, width_chars: i32) -> Label {
-    let label = metric_label(css_name);
-    // Reserve normal ranges without clipping exceptionally long values.
-    label.set_width_chars(width_chars);
-    label
+/* Widest value of every percentage status, so their slots match. */
+const PERCENT: &[&str] = &["100%"];
+
+/* A metric label inside a slot as wide as its widest `samples`; append the
+ * slot and update the label. */
+fn reserved_metric_label(css_name: &str, samples: &[&str]) -> metric::Slot {
+    metric::Slot::new(&metric_label(css_name), samples)
 }
 
 fn status_icon(name: &str) -> Image {
@@ -444,63 +447,53 @@ mod tests {
         settings.set_property("gtk-application-prefer-dark-theme", original);
     }
 
-    pub(crate) fn assert_metric_widths() {
-        for (name, width_chars, values) in [
+    /* `uniform` themes style every percentage label alike. */
+    pub(crate) fn assert_metric_widths(uniform: bool) {
+        let percent: &[&str] = PERCENT;
+        for (name, samples, values) in [
             (
                 "cpu-load-label",
-                5,
+                percent,
                 vec!["--", "1%", "9%", "10%", "99%", "100%"],
             ),
-            ("gpu-label", 5, vec!["N/A", "9%", "99%", "100%"]),
-            ("battery-label", 5, vec!["1%", "99%", "100%"]),
-            ("brightness-label", 5, vec!["1%", "99%", "100%"]),
+            ("gpu-label", percent, vec!["N/A", "9%", "99%", "100%"]),
+            ("battery-label", percent, vec!["1%", "99%", "100%"]),
+            ("brightness-label", percent, vec!["1%", "99%", "100%"]),
             (
                 "volume-label",
-                6,
-                vec!["1%", "99%", "100%", "150%", "Muted"],
+                percent,
+                vec!["0%", "1%", "67%", "99%", "100%"],
             ),
-            (
-                "notification-label",
-                4,
-                vec!["", "1", "9", "10", "99", "100", "999"],
-            ),
+            ("notification-label", &["99"], vec!["1", "9", "10", "99"]),
             (
                 "cpu-label",
-                16,
-                vec![
-                    "999 MHz",
-                    "5.2 GHz",
-                    "12.0 GHz",
-                    "5.2 GHz 99°C",
-                    "5.2 GHz 100°C",
-                ],
+                &["9.9 GHz 100°C"],
+                vec!["999 MHz", "5.2 GHz", "5.2 GHz 99°C", "5.2 GHz 100°C"],
             ),
-            ("mem-label", 5, vec!["N/A", "1%", "99%", "100%"]),
+            ("mem-label", percent, vec!["N/A", "1%", "99%", "100%"]),
             (
                 "mem-label",
-                20,
-                vec![
-                    "1.0/8.0 GiB",
-                    "99.9/128.0 GiB",
-                    "100.0/128.0 GiB",
-                    "9999.9/9999.9 GiB",
-                ],
+                &["99.9/999.9 GiB"],
+                vec!["1.0/8.0 GiB", "26.9/125.1 GiB", "99.9/128.0 GiB"],
             ),
             (
                 "date-label",
-                -1,
+                &[],
                 vec!["2026/01/11", "2026/10/20", "2026/12/31"],
             ),
-            ("date-label", -1, vec!["01:11:11", "23:59:59"]),
+            ("date-label", &[], vec!["01:11:11", "23:59:59"]),
         ] {
-            let label = if width_chars > 0 {
-                reserved_metric_label(name, width_chars)
+            let (slot, label): (gtk::Widget, Label) = if samples.is_empty() {
+                let label = metric_label(name);
+                (label.clone().upcast(), label)
             } else {
-                metric_label(name)
+                let slot = reserved_metric_label(name, samples);
+                let label = slot.label();
+                (slot.upcast(), label)
             };
             let row = Box::new(Orientation::Horizontal, 4);
             let neighbor = Label::new(Some("Next"));
-            row.append(&label);
+            row.append(&slot);
             row.append(&neighbor);
             let mut previous = None;
             for value in values {
@@ -521,17 +514,64 @@ mod tests {
                     );
                 }
                 previous = Some(geometry);
+                if !samples.is_empty() {
+                    let spare = label.width() - label.layout().pixel_size().0;
+                    let leading = label.layout_offsets().0;
+                    assert!(
+                        (leading - (spare - leading)).abs() <= 1,
+                        "metric is not centred in its slot: {name} {value}"
+                    );
+                }
+            }
+            if !samples.is_empty() {
+                // The slot is exactly as wide as its widest sample, no wider.
+                label.set_text(samples[0]);
+                let slot = slot.measure(Orientation::Horizontal, -1).1;
+                assert_eq!(
+                    slot,
+                    label.measure(Orientation::Horizontal, -1).1,
+                    "metric reserves unused space: {name}"
+                );
             }
         }
-        let label = reserved_metric_label("notification-label", 4);
-        label.set_text("12345678901234567890");
-        let (_, width, _, _) = label.measure(Orientation::Horizontal, -1);
-        let (_, height, _, _) = label.measure(Orientation::Vertical, width);
-        label.allocate(width, height, -1, None);
+
+        // Every percentage reserves the same text width, so icon-to-text gaps
+        // match apart from any padding a theme gives individual labels.
+        let widths: Vec<_> = [
+            "cpu-load-label",
+            "gpu-label",
+            "battery-label",
+            "brightness-label",
+            "volume-label",
+            "mem-label",
+        ]
+        .into_iter()
+        .map(|name| {
+            let slot = reserved_metric_label(name, PERCENT);
+            let label = slot.label();
+            label.set_text("7%");
+            let chrome =
+                label.measure(Orientation::Horizontal, -1).1 - label.layout().pixel_size().0;
+            slot.measure(Orientation::Horizontal, -1).1 - chrome
+        })
+        .collect();
         assert!(
-            !label.layout().is_ellipsized(),
-            "larger values must be allowed to grow"
+            !uniform || widths.windows(2).all(|pair| pair[0] == pair[1]),
+            "percentage slots differ: {widths:?}"
         );
+
+        for (samples, long) in [(PERCENT, "Muted"), (&["99"][..], "12345678901234567890")] {
+            let slot = reserved_metric_label("volume-label", samples);
+            let label = slot.label();
+            label.set_text(long);
+            let (_, width, _, _) = slot.measure(Orientation::Horizontal, -1);
+            let (_, height, _, _) = slot.measure(Orientation::Vertical, width);
+            slot.allocate(width, height, -1, None);
+            assert!(
+                !label.layout().is_ellipsized(),
+                "larger values must be allowed to grow: {long}"
+            );
+        }
         let custom_clock = metric_label("date-label");
         custom_clock.set_text("Tuesday, October 27, 2026");
         assert_eq!(custom_clock.width_chars(), -1);
@@ -562,7 +602,7 @@ mod tests {
             assert!(icons.has_icon(name), "missing symbolic icon: {name}");
         }
 
-        assert_metric_widths();
+        assert_metric_widths(true);
 
         let networks = vec![
             network::Network {
@@ -960,15 +1000,16 @@ mod tests {
         assert_eq!(rows.first_child().as_ref(), Some(date.upcast_ref()));
         assert_eq!(rows.last_child().as_ref(), Some(time.upcast_ref()));
 
-        let ram = reserved_metric_label("mem-label", 20);
-        ram.set_text("26.9/125.1 GiB");
+        let ram_slot = reserved_metric_label("mem-label", PERCENT);
+        let ram = ram_slot.label();
+        ram.set_text("100%");
         let memory_group = Box::builder()
             .css_classes(["status-group"])
             .spacing(4)
             .valign(Align::Center)
             .build();
         memory_group.append(&status_icon("drive-harddisk-symbolic"));
-        memory_group.append(&ram);
+        memory_group.append(&ram_slot);
         let square_buttons = Box::new(Orientation::Horizontal, 4);
         for (tag, class) in [(1, "active"), (2, "occupied"), (9, "empty-active")] {
             let button = workspace_button(tag);
