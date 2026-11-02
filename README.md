@@ -42,6 +42,12 @@ The top bar can show, in any order (see [Configuration](#configuration)):
 
 * Workspaces 1-9 (or up to `workspaces`), with an animated active-workspace
   indicator and click-to-switch. Each display highlights the workspace it shows.
+* Pinned apps from `[launcher]`, dock-style, with the same icons as the task
+  bar. Clicking an app focuses its most recently used window, or starts it when
+  none is open; middle-click always starts a new instance. A dot marks apps with
+  open windows and a wider bar the focused one. Apps start in their own systemd
+  scope, so restarting the bar does not close them. Entries that are not
+  installed are skipped with a warning.
 * Playing or paused MPRIS media, with previous, play/pause, and next controls.
   Long track names scroll while the player is visible.
 * The active Hyprland submap, while one is active.
@@ -199,9 +205,9 @@ volume_step = 5
 brightness_step = 5
 
 [bar]
-# Modules: workspaces, media, submap, tray, more, keyboard, network, cpu,
-# memory, gpu, battery, brightness, volume, notifications, clock, power.
-left = ["workspaces", "media", "submap"]
+# Modules: workspaces, launcher, media, submap, tray, more, keyboard, network,
+# cpu, memory, gpu, battery, brightness, volume, notifications, clock, power.
+left = ["workspaces", "launcher", "media", "submap"]
 right = ["tray", "more", "keyboard", "network", "cpu", "memory", "gpu",
          "battery", "brightness", "volume", "notifications", "clock", "power"]
 # Show the bottom task bar.
@@ -237,6 +243,13 @@ poweroff = "systemctl poweroff"
 [keyboard]
 # Show the layout even when the keyboard has only one.
 always = false
+
+[launcher]
+# Pinned apps, by desktop-entry ID (the .desktop file name, with or without
+# `.desktop`; see /run/current-system/sw/share/applications on NixOS). Windows
+# belong to an app when their class is its ID or its StartupWMClass. Empty by
+# default, which hides the module.
+apps = ["kitty", "firefox", "discord", "steam"]
 ```
 
 Services for modules that no display uses are not started; for example,
@@ -262,6 +275,7 @@ theme and config into the Nix store, and runs it as a systemd user service:
       settings = {
         workspaces = 10;
         outputs."HDMI-A-1".workspaces = [ 4 5 6 ];
+        launcher.apps = [ "kitty" "firefox" "discord" "steam" ];
       };
     };
   };

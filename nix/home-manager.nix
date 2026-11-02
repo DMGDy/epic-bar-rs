@@ -7,6 +7,7 @@
 #     settings = {
 #       workspaces = 10;
 #       outputs."HDMI-A-1".workspaces = [ 4 5 6 ];
+#       launcher.apps = [ "kitty" "firefox" ];
 #     };
 #   };
 #
@@ -72,6 +73,7 @@ in
           outputs."HDMI-A-1" = { workspaces = [ 4 5 6 ]; tasks = false; };
           clock.time = "[hour]:[minute]";
           power.lock = "hyprlock";
+          launcher.apps = [ "kitty" "firefox" "discord" "steam" ];
         }
       '';
       description = ''
