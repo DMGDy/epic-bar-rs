@@ -465,6 +465,34 @@ tray button.tray-item image {
     color: @autumn_foreground;
 }
 
+/* Pinned apps: a dot under running apps, a wider accent bar when focused. */
+launcher {
+    padding: 0 2px;
+}
+
+launcher button.launcher-app {
+    min-width: 0;
+    min-height: 0;
+    padding: 4px 7px 2px;
+}
+
+launcher-indicator {
+    min-width: 4px;
+    min-height: 3px;
+    border-radius: 2px;
+    background-color: transparent;
+    transition: min-width 150ms ease, background-color 150ms ease;
+}
+
+launcher button.running launcher-indicator {
+    background-color: @autumn_secondary;
+}
+
+launcher button.focused launcher-indicator {
+    min-width: 14px;
+    background-color: @autumn_accent;
+}
+
 .bar-popover .audio-output.selected,
 .bar-popover .audio-output.selected label {
     background-color: @autumn_selection;

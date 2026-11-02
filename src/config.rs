@@ -21,6 +21,7 @@ use serde::Deserialize;
 #[serde(rename_all = "kebab-case")]
 pub enum Module {
     Workspaces,
+    Launcher,
     Media,
     Submap,
     Tray,
@@ -50,7 +51,12 @@ pub struct Bar {
 impl Default for Bar {
     fn default() -> Self {
         Self {
-            left: vec![Module::Workspaces, Module::Media, Module::Submap],
+            left: vec![
+                Module::Workspaces,
+                Module::Launcher,
+                Module::Media,
+                Module::Submap,
+            ],
             right: vec![
                 Module::Tray,
                 Module::More,
@@ -167,6 +173,31 @@ impl Default for Keyboard {
     }
 }
 
+/* Pinned apps, as desktop-entry IDs with or without `.desktop`
+ * ("kitty", "org.mozilla.firefox.desktop"). Entries that are not installed
+ * are skipped at runtime rather than rejected, since apps get uninstalled. */
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Launcher {
+    pub apps: Vec<String>,
+}
+
+impl Launcher {
+    /* Configured IDs with their `.desktop` suffix, in order. */
+    pub fn desktop_ids(&self) -> Vec<String> {
+        self.apps
+            .iter()
+            .map(|id| {
+                if id.ends_with(".desktop") {
+                    id.clone()
+                } else {
+                    format!("{id}.desktop")
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -178,6 +209,7 @@ pub struct Config {
     pub intervals: Intervals,
     pub power: Power,
     pub keyboard: Keyboard,
+    pub launcher: Launcher,
     /* Volume step for scrolling, in percent. */
     pub volume_step: u32,
     /* Brightness step for scrolling, in percent. */
@@ -194,6 +226,7 @@ impl Default for Config {
             intervals: Intervals::default(),
             power: Power::default(),
             keyboard: Keyboard::default(),
+            launcher: Launcher::default(),
             volume_step: 5,
             brightness_step: 5,
         }
@@ -251,6 +284,14 @@ impl Config {
         ] {
             time::format_description::parse_borrowed::<2>(format)
                 .map_err(|error| format!("{name}: invalid format {format:?}: {error}"))?;
+        }
+        for (index, id) in self.launcher.apps.iter().enumerate() {
+            let stem = id.strip_suffix(".desktop").unwrap_or(id);
+            if stem.trim().is_empty() || id.contains('/') {
+                return Err(format!(
+                    "launcher.apps[{index}]: {id:?} is not a desktop-entry ID"
+                ));
+            }
         }
         for (name, step) in [
             ("volume_step", self.volume_step),
@@ -347,5 +388,27 @@ mod tests {
         assert!(parse("unknown = 1").is_err());
         assert!(parse("[clock]\ntime = \"[nope]\"").is_err());
         assert!(parse("volume_step = 0").is_err());
+        assert!(parse("[launcher]\napps = [\"\"]").is_err());
+        assert!(parse("[launcher]\napps = [\".desktop\"]").is_err());
+        assert!(parse("[launcher]\napps = [\"/usr/share/applications/kitty.desktop\"]").is_err());
+        assert!(parse("[launcher]\nunknown = 1").is_err());
+    }
+
+    #[test]
+    fn launcher_apps_keep_order_and_gain_desktop_suffixes() {
+        assert!(parse("").unwrap().launcher.apps.is_empty());
+        let config = parse(
+            r#"
+            [launcher]
+            apps = ["kitty", "org.mozilla.firefox.desktop", "steam"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.launcher.desktop_ids(),
+            ["kitty.desktop", "org.mozilla.firefox.desktop", "steam.desktop"]
+        );
+        let config = parse("[bar]\nleft = [\"launcher\", \"workspaces\"]").unwrap();
+        assert_eq!(config.bar.left, [Module::Launcher, Module::Workspaces]);
     }
 }

@@ -30,6 +30,7 @@ mod gpu;
 mod hub;
 mod icons;
 mod keyboard;
+mod launcher;
 mod marquee;
 mod media;
 mod metric;
@@ -1086,6 +1087,7 @@ mod tests {
         crate::selection::assert_widgets();
         crate::tasks::assert_widgets();
         crate::icons::assert_widgets();
+        crate::launcher::assert_widgets();
         crate::panels::assert_widgets();
         crate::notifications::assert_widgets();
         crate::media::assert_widgets();

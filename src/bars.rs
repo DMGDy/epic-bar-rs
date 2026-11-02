@@ -18,7 +18,7 @@ use crate::{
     config::{Config, Intervals, Module},
     gpu,
     hub::Hub,
-    keyboard, media, network, notifications, panels, power, previews, selection,
+    keyboard, launcher, media, network, notifications, panels, power, previews, selection,
     status::{self, Cpu, StatusLevel},
     tasks, tray,
     workspaces::{self, Outputs, Workspaces},
@@ -57,6 +57,7 @@ struct Services {
     audio: Option<Rc<Hub<audio::Snapshot>>>,
     notifications: Option<Rc<notifications::Notifications>>,
     tray: Option<Rc<tray::Tray>>,
+    launcher: Option<Rc<launcher::Pinned>>,
     keyboard: Rc<Hub<keyboard::State>>,
     brightness: Rc<Hub<brightness::Snapshot>>,
     backlight: Option<brightness::Backlight>,
@@ -91,6 +92,8 @@ impl Services {
                 ))
             }),
             tray: used.contains(&Module::Tray).then(tray::Tray::start),
+            launcher: (used.contains(&Module::Launcher) && !config.launcher.apps.is_empty())
+                .then(|| launcher::Pinned::start(&config.launcher)),
             keyboard: Hub::new(),
             brightness: Hub::new(),
             backlight,
@@ -214,6 +217,7 @@ struct OutputBars {
     output: Option<String>,
     windows: Vec<ApplicationWindow>,
     strip: Option<Strip>,
+    launchers: Vec<launcher::Launcher>,
     tasks: Option<tasks::Tasks>,
     media: Option<media::Media>,
     more: Option<ToggleButton>,
@@ -250,6 +254,7 @@ impl OutputBars {
             output,
             windows: Vec::new(),
             strip: None,
+            launchers: Vec::new(),
             tasks: None,
             media: None,
             more: None,
@@ -325,6 +330,12 @@ impl OutputBars {
                 self.strip = Some(strip);
                 widget
             }
+            Module::Launcher => {
+                let launcher = launcher::Launcher::new(services.launcher.as_ref()?.hub());
+                let widget = launcher.widget().clone().upcast();
+                self.launchers.push(launcher);
+                widget
+            }
             Module::Media => {
                 let media = media::Media::new();
                 media.start();
@@ -377,6 +388,9 @@ impl OutputBars {
             strip.container.set_tooltip_text(None);
             crate::populate_workspace_box(&strip.container, state, &view);
             strip.selection.refresh();
+        }
+        for launcher in &self.launchers {
+            launcher.update(state);
         }
         if let Some(tasks) = &self.tasks {
             tasks.widget().set_tooltip_text(None);
