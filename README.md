@@ -150,6 +150,12 @@ running ones, so a build can be tried next to the installed bar; quit it to
 remove them. Set `EPIC_BAR_SINGLE_INSTANCE=1` to make a second start activate
 the running bar and exit instead, as the Home Manager service does.
 
+From a checkout, `nix run .#dev` builds the bar and runs it with
+[`dev/config.toml`](dev/config.toml) and the build's own Autumn Dark theme,
+ignoring any `EPIC_BAR_CONFIG`/`EPIC_BAR_THEME` your session exports (Home
+Manager sets both), so new modules and their styles show up next to the
+installed bar. Edit `dev/config.toml` to try other settings.
+
 ### Modifying and Rebuilding
 
 To make changes with flakes, enter the development environment:

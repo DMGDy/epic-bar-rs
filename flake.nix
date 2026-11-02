@@ -25,7 +25,11 @@
   epic-bar = rustPlatform.buildRustPackage {
     pname = "epic-bar-rs";
     version = "${version}";
-    src = ./.;
+    # dev/ only configures `nix run .#dev`; editing it should not rebuild the bar.
+    src = pkgs.lib.cleanSourceWith {
+      src = ./.;
+      filter = path: _: path != toString ./dev;
+    };
     cargoLock.lockFile = ./Cargo.lock;
     # This is a GTK application, even when dependencies pull in Qt.
     dontWrapQtApps = true;
@@ -67,8 +71,24 @@
     '';
 
   };
+  # The bar with the repository's dev config and the theme from the same
+  # build, whatever EPIC_BAR_CONFIG/EPIC_BAR_THEME the session exports.
+  dev = pkgs.writeShellApplication {
+    name = "epic-bar-dev";
+    text = ''
+      export EPIC_BAR_CONFIG=${./dev/config.toml}
+      export EPIC_BAR_THEME=${epic-bar}/share/epic-bar-rs/themes/autumn-dark.css
+      unset EPIC_BAR_SINGLE_INSTANCE
+      exec ${pkgs.lib.getExe' epic-bar "epic-bar-rs"} "$@"
+    '';
+  };
   in {
     packages.${system}.default = epic-bar;
+    apps.${system}.dev = {
+      type = "app";
+      program = "${dev}/bin/epic-bar-dev";
+      meta.description = "Run this build next to the installed bar with dev/config.toml";
+    };
     homeManagerModules.default = import ./nix/home-manager.nix self;
     homeModules.default = self.homeManagerModules.default;
     devShells.${system}.default = pkgs.mkShell {

@@ -1,0 +1,6 @@
+# Config for `nix run .#dev`: the defaults plus the modules that need
+# settings to show anything. Edit freely; it is not used by installed bars.
+workspaces = 9
+
+[launcher]
+apps = ["kitty", "firefox", "discord", "steam"]
