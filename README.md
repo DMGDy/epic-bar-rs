@@ -145,7 +145,10 @@ nix-build
 ./result/bin/epic-bar-rs
 ```
 
-Stop an existing instance before launching another build of the bar.
+A copy started while another is running adds its own bars below or above the
+running ones, so a build can be tried next to the installed bar; quit it to
+remove them. Set `EPIC_BAR_SINGLE_INSTANCE=1` to make a second start activate
+the running bar and exit instead, as the Home Manager service does.
 
 ### Modifying and Rebuilding
 
@@ -290,8 +293,10 @@ change. It passes the generated files through `EPIC_BAR_THEME` and
 environment, which Home Manager's Hyprland module exports by default. Set
 `programs.epic-bar.systemd.enable = false` to start the bar some other way.
 
-Starting the bar while it is already running does nothing; the running instance
-keeps its bars.
+The service sets `EPIC_BAR_SINGLE_INSTANCE=1`, so starting the bar again while
+the service runs does nothing; the running instance keeps its bars. A copy
+started from a shell without that variable (`nix run`, a dev build) stacks its
+own bars next to the service's.
 
 ## Themes
 

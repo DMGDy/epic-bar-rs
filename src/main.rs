@@ -63,7 +63,18 @@ fn main() -> glib::ExitCode {
         }
     };
     workspaces::set_workspace_count(config.workspaces);
-    let app = Application::builder().application_id(APP_ID).build();
+    // Extra copies stack their own bars (handy for trying a build next to the
+    // installed one) unless EPIC_BAR_SINGLE_INSTANCE=1, which the Home Manager
+    // service sets so a second start activates the running bar instead.
+    let flags = if single_instance() {
+        gio::ApplicationFlags::default()
+    } else {
+        gio::ApplicationFlags::NON_UNIQUE
+    };
+    let app = Application::builder()
+        .application_id(APP_ID)
+        .flags(flags)
+        .build();
     let initialization_failed = Rc::new(Cell::new(false));
     let startup_failed = initialization_failed.clone();
     app.connect_startup(move |app| match theme::load() {
@@ -75,8 +86,8 @@ fn main() -> glib::ExitCode {
         }
     });
     let activation_failed = initialization_failed.clone();
-    // Launching the bar again activates the running instance through D-Bus;
-    // only the first activation builds bars.
+    // In single-instance mode, launching the bar again activates the running
+    // instance through D-Bus; only the first activation builds bars.
     let built = Cell::new(false);
     app.connect_activate(move |app| {
         if activation_failed.get() || built.replace(true) {
@@ -94,6 +105,10 @@ fn main() -> glib::ExitCode {
     } else {
         result
     }
+}
+
+fn single_instance() -> bool {
+    std::env::var_os("EPIC_BAR_SINGLE_INSTANCE").is_some_and(|value| value == "1")
 }
 
 fn network_entry(text: &str, icon: &str, tooltip: &str) -> Box {

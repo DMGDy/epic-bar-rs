@@ -125,6 +125,8 @@ in
         Environment = [
           "EPIC_BAR_THEME=${themeFile}"
           "EPIC_BAR_CONFIG=${configFile}"
+          # A second start activates this bar instead of stacking another.
+          "EPIC_BAR_SINGLE_INSTANCE=1"
         ];
         Restart = "on-failure";
         RestartSec = 2;
